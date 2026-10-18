@@ -102,8 +102,10 @@ class MusicController @Inject constructor(
                     if (dur > 0L) {
                         _durationMs.value = dur
                     }
+                    delay(125)
+                } else {
+                    delay(500)
                 }
-                delay(100) // 100ms ticker for smooth progress and lyric sync
             }
         }
     }

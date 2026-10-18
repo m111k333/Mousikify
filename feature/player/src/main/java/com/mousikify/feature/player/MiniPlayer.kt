@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.MusicNote
@@ -158,16 +157,6 @@ fun MiniPlayer(
                     overflow = TextOverflow.Ellipsis
                 )
             }
-
-            // Device icon (Spotify connect style)
-            Icon(
-                imageVector = Icons.Default.Devices,
-                contentDescription = null,
-                tint = SpotifyTextSecondary,
-                modifier = Modifier
-                    .size(20.dp)
-                    .padding(end = 4.dp)
-            )
 
             // Favorite heart
             IconButton(onClick = onFavoriteClick) {

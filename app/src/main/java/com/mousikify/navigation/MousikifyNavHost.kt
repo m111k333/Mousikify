@@ -43,7 +43,11 @@ import com.mousikify.core.designsystem.theme.SpotifyTextSecondary
 import com.mousikify.feature.equalizer.EqualizerRoute
 import com.mousikify.feature.home.HomeRoute
 import com.mousikify.feature.library.LibraryRoute
-import com.mousikify.feature.player.PlayerBottomSheet
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import com.mousikify.feature.player.FullScreenPlayerOverlay
+import com.mousikify.feature.player.MiniPlayerBar
 import com.mousikify.feature.search.SearchRoute
 
 sealed class Screen(
@@ -72,24 +76,24 @@ fun MainAppContainer(
     val currentRoute = navBackStackEntry?.destination?.route
 
     val showBottomBar = currentRoute in bottomNavItems.map { it.route }
+    var isPlayerExpanded by remember { mutableStateOf(false) }
 
-    Scaffold(
-        containerColor = SpotifyBackground,
-        bottomBar = {
-            if (showBottomBar) {
-                Column {
-                    // MiniPlayer attached directly above bottom navigation bar
-                    PlayerBottomSheet(
-                        onNavigateToEqualizer = {
-                            navController.navigate(Screen.Equalizer.route)
-                        },
-                        modifier = Modifier.padding(bottom = 4.dp)
-                    )
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            containerColor = SpotifyBackground,
+            bottomBar = {
+                if (showBottomBar) {
+                    Column {
+                        // MiniPlayer attached directly above bottom navigation bar
+                        MiniPlayerBar(
+                            onExpand = { isPlayerExpanded = true },
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
 
-                    NavigationBar(
-                        containerColor = SpotifyBackground.copy(alpha = 0.95f),
-                        contentColor = SpotifyTextPrimary
-                    ) {
+                        NavigationBar(
+                            containerColor = SpotifyBackground.copy(alpha = 0.95f),
+                            contentColor = SpotifyTextPrimary
+                        ) {
                         bottomNavItems.forEach { screen ->
                             val selected = currentRoute == screen.route
                             NavigationBarItem(
@@ -150,5 +154,16 @@ fun MainAppContainer(
                 )
             }
         }
+    }
+
+        // Full Screen Player Overlay on top of everything!
+        FullScreenPlayerOverlay(
+            isExpanded = isPlayerExpanded,
+            onCollapse = { isPlayerExpanded = false },
+            onNavigateToEqualizer = {
+                isPlayerExpanded = false
+                navController.navigate(Screen.Equalizer.route)
+            }
+        )
     }
 }
