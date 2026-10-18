@@ -49,8 +49,20 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
     private val channelStates = arrayOf(ChannelState(), ChannelState())
     private var sampleRate = 44100
 
+    private var bassBoostStrength: Int = 0 // 0 to 1000
+    private var virtualizerStrength: Int = 0 // 0 to 1000
+
     fun setEnabled(enabled: Boolean) {
         this.isEnabled = enabled
+    }
+
+    fun setBassBoost(strength: Int) {
+        this.bassBoostStrength = strength.coerceIn(0, 1000)
+        recomputeFilters()
+    }
+
+    fun setVirtualizer(strength: Int) {
+        this.virtualizerStrength = strength.coerceIn(0, 1000)
     }
 
     fun setBandLevel(bandIndex: Int, levelMb: Int) {
@@ -76,9 +88,19 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
         val fs = sampleRate.toDouble()
         val q = 1.4142
 
+        val bassExtraDb = (bassBoostStrength / 1000.0) * 12.0 // Up to +12dB low-end boost
+
         for (i in 0 until 10) {
             val f0 = BAND_FREQUENCIES[i].toDouble().coerceAtMost(fs * 0.45)
-            val gainDb = bandLevelsMb[i] / 100.0 // Millibels to dB
+            val baseGainDb = bandLevelsMb[i] / 100.0 // Millibels to dB
+            val boostDb = when (i) {
+                0 -> bassExtraDb * 0.9  // 31Hz
+                1 -> bassExtraDb * 1.0  // 62Hz
+                2 -> bassExtraDb * 0.7  // 125Hz
+                3 -> bassExtraDb * 0.3  // 250Hz
+                else -> 0.0
+            }
+            val gainDb = (baseGainDb + boostDb).coerceIn(-20.0, 20.0)
             val a = 10.0.pow(gainDb / 40.0)
             val w0 = 2.0 * PI * f0 / fs
             val alpha = sin(w0) / (2.0 * q)
@@ -125,14 +147,69 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
             return
         }
 
-        while (inputBuffer.hasRemaining()) {
-            for (ch in 0 until channelCount) {
-                if (!inputBuffer.hasRemaining()) break
+        if (isStereo) {
+            val widthFactor = if (isEnabled && virtualizerStrength > 0) {
+                1.0 + (virtualizerStrength / 1000.0) * 1.5 // 1.0x to 2.5x spatial widening
+            } else 1.0
+
+            while (inputBuffer.remaining() >= 4) {
+                val rawLeft = inputBuffer.short
+                val rawRight = inputBuffer.short
+                var sampleLeft = (rawLeft.toDouble() / 32768.0) * preAmpGainLinear
+                var sampleRight = (rawRight.toDouble() / 32768.0) * preAmpGainLinear
+
+                if (isEnabled) {
+                    val stateL = channelStates[0]
+                    for (band in 0 until 10) {
+                        val filter = filters[band]
+                        val out = filter.b0 * sampleLeft +
+                                filter.b1 * stateL.x1[band] +
+                                filter.b2 * stateL.x2[band] -
+                                filter.a1 * stateL.y1[band] -
+                                filter.a2 * stateL.y2[band]
+                        stateL.x2[band] = stateL.x1[band]
+                        stateL.x1[band] = sampleLeft
+                        stateL.y2[band] = stateL.y1[band]
+                        stateL.y1[band] = out
+                        sampleLeft = out
+                    }
+
+                    val stateR = channelStates[1]
+                    for (band in 0 until 10) {
+                        val filter = filters[band]
+                        val out = filter.b0 * sampleRight +
+                                filter.b1 * stateR.x1[band] +
+                                filter.b2 * stateR.x2[band] -
+                                filter.a1 * stateR.y1[band] -
+                                filter.a2 * stateR.y2[band]
+                        stateR.x2[band] = stateR.x1[band]
+                        stateR.x1[band] = sampleRight
+                        stateR.y2[band] = stateR.y1[band]
+                        stateR.y1[band] = out
+                        sampleRight = out
+                    }
+
+                    if (widthFactor > 1.0) {
+                        val mid = (sampleLeft + sampleRight) * 0.5
+                        val side = (sampleLeft - sampleRight) * 0.5
+                        sampleLeft = mid + side * widthFactor
+                        sampleRight = mid - side * widthFactor
+                    }
+                }
+
+                val limitedL = if (sampleLeft > 1.0 || sampleLeft < -1.0) tanh(sampleLeft) else sampleLeft
+                val limitedR = if (sampleRight > 1.0 || sampleRight < -1.0) tanh(sampleRight) else sampleRight
+
+                outputBuffer.putShort((limitedL * 32767.0).toInt().coerceIn(-32768, 32767).toShort())
+                outputBuffer.putShort((limitedR * 32767.0).toInt().coerceIn(-32768, 32767).toShort())
+            }
+        } else {
+            while (inputBuffer.hasRemaining()) {
                 val rawSample = inputBuffer.short
                 var sample = (rawSample.toDouble() / 32768.0) * preAmpGainLinear
 
                 if (isEnabled) {
-                    val state = channelStates[ch]
+                    val state = channelStates[0]
                     for (band in 0 until 10) {
                         val filter = filters[band]
                         val out = filter.b0 * sample +
@@ -140,7 +217,6 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
                                 filter.b2 * state.x2[band] -
                                 filter.a1 * state.y1[band] -
                                 filter.a2 * state.y2[band]
-
                         state.x2[band] = state.x1[band]
                         state.x1[band] = sample
                         state.y2[band] = state.y1[band]
@@ -149,15 +225,8 @@ class EqualizerAudioProcessor : BaseAudioProcessor() {
                     }
                 }
 
-                // Soft-knee limiter / saturation to avoid harsh digital clipping
-                val limited = if (sample > 1.0 || sample < -1.0) {
-                    tanh(sample)
-                } else {
-                    sample
-                }
-
-                val outShort = (limited * 32767.0).toInt().coerceIn(-32768, 32767).toShort()
-                outputBuffer.putShort(outShort)
+                val limited = if (sample > 1.0 || sample < -1.0) tanh(sample) else sample
+                outputBuffer.putShort((limited * 32767.0).toInt().coerceIn(-32768, 32767).toShort())
             }
         }
 

@@ -64,6 +64,7 @@ class SafFolderScanner @Inject constructor(
         // 1. Upsert new songs to library
         if (songsToUpsert.isNotEmpty()) {
             songDao.upsertSongs(songsToUpsert)
+            com.mousikify.core.scanner.work.AudioAnalysisWorker.enqueue(context)
         }
 
         // 2. Automatically create or update playlist with the folder name

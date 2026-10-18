@@ -86,6 +86,11 @@ class MusicController @Inject constructor(
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 _durationMs.value = controller.duration.coerceAtLeast(0L)
+                if (playbackState == Player.STATE_ENDED) {
+                    if (!queueManager.isCrossfading.value) {
+                        skipToNext()
+                    }
+                }
             }
         })
     }
@@ -132,7 +137,25 @@ class MusicController @Inject constructor(
     private fun playSongInternal(song: Song) {
         val controller = mediaController
         if (controller != null) {
-            val mediaItem = androidx.media3.common.MediaItem.fromUri(android.net.Uri.parse(song.contentUri))
+            val metadata = androidx.media3.common.MediaMetadata.Builder()
+                .setTitle(song.title)
+                .setArtist(song.artistName)
+                .setAlbumTitle(song.albumName)
+                .setArtworkUri(
+                    if (!song.artworkUri.isNullOrBlank()) {
+                        android.net.Uri.parse(song.artworkUri)
+                    } else {
+                        android.net.Uri.parse("content://media/external/audio/albumart/${song.albumId}")
+                    }
+                )
+                .build()
+
+            val mediaItem = androidx.media3.common.MediaItem.Builder()
+                .setMediaId(song.id.toString())
+                .setUri(android.net.Uri.parse(song.contentUri))
+                .setMediaMetadata(metadata)
+                .build()
+
             controller.setMediaItem(mediaItem)
             controller.prepare()
             controller.play()
@@ -164,6 +187,9 @@ class MusicController @Inject constructor(
         val next = queueManager.getNextSong()
         if (next != null) {
             playSongInternal(next)
+        } else {
+            _isPlaying.value = false
+            _currentPositionMs.value = 0L
         }
     }
 

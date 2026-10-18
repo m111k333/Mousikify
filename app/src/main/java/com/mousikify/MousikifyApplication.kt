@@ -40,6 +40,9 @@ class MousikifyApplication : Application(), Configuration.Provider {
         // Enqueue immediate initial library indexing
         MediaStoreScannerWorker.enqueue(this, initialDelaySeconds = 0)
 
+        // Schedule periodic offline audio DSP analysis when charging/idle
+        com.mousikify.core.scanner.work.AudioAnalysisWorker.schedulePeriodic(this)
+
         // Continuously synchronize real-time playback state with Spotify home screen widget
         applicationScope.launch {
             kotlinx.coroutines.flow.combine(

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -83,9 +84,16 @@ import com.mousikify.core.model.Song
 @Composable
 fun HomeRoute(
     onNavigateToEqualizer: () -> Unit = {},
+    homeResetTrigger: Long = 0L,
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+
+    androidx.compose.runtime.LaunchedEffect(homeResetTrigger) {
+        if (homeResetTrigger > 0L) {
+            viewModel.onIntent(HomeIntent.CloseDetail)
+        }
+    }
 
     val folderPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -99,7 +107,8 @@ fun HomeRoute(
         uiState = uiState,
         onIntent = viewModel::onIntent,
         onPickFolder = { folderPicker.launch(null) },
-        onNavigateToEqualizer = onNavigateToEqualizer
+        onNavigateToEqualizer = onNavigateToEqualizer,
+        homeResetTrigger = homeResetTrigger
     )
 }
 
@@ -109,8 +118,19 @@ fun HomeScreen(
     onIntent: (HomeIntent) -> Unit,
     onPickFolder: () -> Unit,
     onNavigateToEqualizer: () -> Unit,
+    homeResetTrigger: Long = 0L,
     modifier: Modifier = Modifier
 ) {
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+
+    androidx.compose.runtime.LaunchedEffect(homeResetTrigger) {
+        if (homeResetTrigger > 0L && uiState.activeDetail == null) {
+            try {
+                listState.animateScrollToItem(0)
+            } catch (_: Exception) {}
+        }
+    }
+
     BackHandler(enabled = uiState.activeDetail != null) {
         onIntent(HomeIntent.CloseDetail)
     }
@@ -131,6 +151,7 @@ fun HomeScreen(
                 .background(SpotifyBackground)
         ) {
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 140.dp)
             ) {
@@ -139,27 +160,10 @@ fun HomeScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(start = 16.dp, end = 12.dp, top = 24.dp, bottom = 12.dp),
+                            .statusBarsPadding()
+                            .padding(start = 16.dp, end = 12.dp, top = 16.dp, bottom = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Profile Avatar
-                        Box(
-                            modifier = Modifier
-                                .size(34.dp)
-                                .clip(CircleShape)
-                                .background(Brush.linearGradient(listOf(Color(0xFF3B5998), Color(0xFF1DB954)))),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "M",
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.width(12.dp))
-
                         // Pills: "All", "Music", "Playlists"
                         Row(
                             modifier = Modifier.weight(1f),
@@ -302,7 +306,7 @@ fun HomeScreen(
             }
 
             // "Made for you" (Spotify Smart Mixes with vibrant gradients)
-            if (uiState.smartMixes.isNotEmpty() && (selectedPill == "All" || selectedPill == "Music")) {
+            if (uiState.smartMixes.isNotEmpty() && (selectedPill == "All" || selectedPill == "Music" || selectedPill == "Playlists")) {
                 item {
                     Spacer(modifier = Modifier.height(28.dp))
                     Text(
@@ -1160,7 +1164,8 @@ private fun HomeDetailScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 8.dp, top = 20.dp, end = 16.dp, bottom = 8.dp),
+                    .statusBarsPadding()
+                    .padding(start = 8.dp, top = 12.dp, end = 16.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = { onIntent(HomeIntent.CloseDetail) }) {

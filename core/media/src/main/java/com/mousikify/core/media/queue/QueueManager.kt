@@ -38,6 +38,13 @@ class QueueManager @Inject constructor(
     private val _repeatMode = MutableStateFlow(RepeatMode.OFF)
     val repeatMode: StateFlow<RepeatMode> = _repeatMode.asStateFlow()
 
+    private val _isCrossfading = MutableStateFlow(false)
+    val isCrossfading: StateFlow<Boolean> = _isCrossfading.asStateFlow()
+
+    fun setCrossfading(crossfading: Boolean) {
+        _isCrossfading.value = crossfading
+    }
+
     init {
         scope.launch {
             _isShuffleEnabled.value = preferences.shuffleEnabled.first()

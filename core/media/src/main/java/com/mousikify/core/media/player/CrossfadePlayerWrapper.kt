@@ -5,8 +5,8 @@ import android.net.Uri
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
-import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -33,20 +33,22 @@ class CrossfadePlayerWrapper(
     val audioProcessorA: EqualizerAudioProcessor,
     val audioProcessorB: EqualizerAudioProcessor,
     val audioEffectController: AudioEffectController
-) : ForwardingPlayer(createExoPlayer(context, audioProcessorA)) {
+) {
 
-    private var playerA: ExoPlayer = wrappedPlayer as ExoPlayer
-    private var playerB: ExoPlayer = createExoPlayer(context, audioProcessorB)
+    val playerA: ExoPlayer = createExoPlayer(context, audioProcessorA)
+    val playerB: ExoPlayer = createExoPlayer(context, audioProcessorB)
 
-    private var activePlayer: ExoPlayer = playerA
-    private var standbyPlayer: ExoPlayer = playerB
+    var activePlayer: ExoPlayer = playerA
+        private set
+    var standbyPlayer: ExoPlayer = playerB
+        private set
 
     private val scope = CoroutineScope(Dispatchers.Main)
     private var crossfadeMonitorJob: Job? = null
-    private var isCrossfading = false
+    private var crossfadeTransitionJob: Job? = null
 
     var crossfadeDurationMs: Int = 3000
-
+    var onPlayerSwapped: ((ExoPlayer) -> Unit)? = null
     var onSongTransition: ((Song) -> Unit)? = null
 
     init {
@@ -65,43 +67,29 @@ class CrossfadePlayerWrapper(
         player.setWakeMode(C.WAKE_MODE_LOCAL)
 
         player.addListener(object : Player.Listener {
+            override fun onAudioSessionIdChanged(audioSessionId: Int) {
+                if (player == activePlayer && audioSessionId > 0) {
+                    audioEffectController.attachAudioSession(audioSessionId)
+                }
+            }
+
             override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_ENDED && player == activePlayer && !isCrossfading) {
-                    val nextSong = queueManager.getNextSong()
-                    if (nextSong != null) {
-                        playSong(nextSong)
+                if (player == activePlayer && playbackState == Player.STATE_READY) {
+                    if (player.audioSessionId > 0) {
+                        audioEffectController.attachAudioSession(player.audioSessionId)
                     }
                 }
             }
 
-            override fun onAudioSessionIdChanged(audioSessionId: Int) {
-                if (player == activePlayer) {
-                    audioEffectController.attachAudioSession(audioSessionId)
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                if (player == activePlayer && reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED) {
+                    // User manually triggered a song change
+                    if (queueManager.isCrossfading.value) {
+                        cancelCrossfade()
+                    }
                 }
             }
         })
-    }
-
-    fun playSong(song: Song) {
-        isCrossfading = false
-        activePlayer.volume = 1.0f
-        activePlayer.stop()
-        standbyPlayer.stop()
-
-        val mediaItem = MediaItem.fromUri(Uri.parse(song.contentUri))
-        activePlayer.setMediaItem(mediaItem)
-        activePlayer.prepare()
-        activePlayer.play()
-
-        // Apply ReplayGain
-        if (activePlayer == playerA) {
-            audioProcessorA.setReplayGain(song.replayGainDb)
-        } else {
-            audioProcessorB.setReplayGain(song.replayGainDb)
-        }
-
-        audioEffectController.attachAudioSession(activePlayer.audioSessionId)
-        onSongTransition?.invoke(song)
     }
 
     private fun startPositionMonitor() {
@@ -109,7 +97,7 @@ class CrossfadePlayerWrapper(
         crossfadeMonitorJob = scope.launch {
             while (isActive) {
                 delay(200)
-                if (!activePlayer.isPlaying || isCrossfading || crossfadeDurationMs <= 0) {
+                if (!activePlayer.isPlaying || queueManager.isCrossfading.value || crossfadeDurationMs <= 0) {
                     continue
                 }
 
@@ -129,31 +117,49 @@ class CrossfadePlayerWrapper(
     }
 
     private fun launchCrossfade(nextSong: Song, remainingMs: Long) {
-        isCrossfading = true
+        queueManager.setCrossfading(true)
 
-        val mediaItem = MediaItem.fromUri(Uri.parse(nextSong.contentUri))
+        val metadata = MediaMetadata.Builder()
+            .setTitle(nextSong.title)
+            .setArtist(nextSong.artistName)
+            .setAlbumTitle(nextSong.albumName)
+            .setArtworkUri(
+                if (!nextSong.artworkUri.isNullOrBlank()) {
+                    Uri.parse(nextSong.artworkUri)
+                } else {
+                    Uri.parse("content://media/external/audio/albumart/${nextSong.albumId}")
+                }
+            )
+            .build()
+
+        val mediaItem = MediaItem.Builder()
+            .setMediaId(nextSong.id.toString())
+            .setUri(Uri.parse(nextSong.contentUri))
+            .setMediaMetadata(metadata)
+            .build()
+
         standbyPlayer.setMediaItem(mediaItem)
         standbyPlayer.volume = 0f
         standbyPlayer.prepare()
         standbyPlayer.play()
 
-        // Apply ReplayGain to next player
+        // Apply ReplayGain
         if (standbyPlayer == playerA) {
             audioProcessorA.setReplayGain(nextSong.replayGainDb)
         } else {
             audioProcessorB.setReplayGain(nextSong.replayGainDb)
         }
 
-        scope.launch {
-            val totalCrossfade = crossfadeDurationMs.toFloat()
+        crossfadeTransitionJob?.cancel()
+        crossfadeTransitionJob = scope.launch {
+            val totalTime = remainingMs.coerceAtLeast(1000L).toFloat()
             val startTime = System.currentTimeMillis()
-            val totalTime = remainingMs.coerceAtLeast(1000)
 
-            while (isActive && isCrossfading) {
+            while (isActive && queueManager.isCrossfading.value) {
                 val elapsed = System.currentTimeMillis() - startTime
-                val progress = (elapsed / totalTime.toFloat()).coerceIn(0f, 1f)
+                val progress = (elapsed / totalTime).coerceIn(0f, 1f)
 
-                // Sine/equal-power fade curve
+                // Sine / equal-power fade curve
                 val fadeOut = cos(progress * (PI / 2.0)).toFloat().coerceIn(0f, 1f)
                 val fadeIn = sin(progress * (PI / 2.0)).toFloat().coerceIn(0f, 1f)
 
@@ -163,28 +169,42 @@ class CrossfadePlayerWrapper(
                 if (progress >= 1.0f) {
                     break
                 }
-                delay(50)
+                delay(40)
             }
 
+            if (!isActive) return@launch
+
             // Complete crossfade swap
-            activePlayer.stop()
-            activePlayer.volume = 1.0f
-            standbyPlayer.volume = 1.0f
+            val outgoing = activePlayer
+            val incoming = standbyPlayer
 
-            // Swap references
-            val temp = activePlayer
-            activePlayer = standbyPlayer
-            standbyPlayer = temp
+            queueManager.getNextSong() // Advance queue to nextSong
 
-            isCrossfading = false
-            queueManager.getNextSong() // advance queue
+            outgoing.stop()
+            outgoing.volume = 1.0f
+            incoming.volume = 1.0f
+
+            activePlayer = incoming
+            standbyPlayer = outgoing
+
+            queueManager.setCrossfading(false)
+            onPlayerSwapped?.invoke(activePlayer)
             audioEffectController.attachAudioSession(activePlayer.audioSessionId)
             onSongTransition?.invoke(nextSong)
         }
     }
 
+    fun cancelCrossfade() {
+        crossfadeTransitionJob?.cancel()
+        queueManager.setCrossfading(false)
+        standbyPlayer.stop()
+        standbyPlayer.volume = 1.0f
+        activePlayer.volume = 1.0f
+    }
+
     fun releasePlayers() {
         crossfadeMonitorJob?.cancel()
+        crossfadeTransitionJob?.cancel()
         audioEffectController.release()
         playerA.release()
         playerB.release()

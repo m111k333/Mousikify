@@ -81,11 +81,15 @@ class MusicPlaybackService : MediaSessionService() {
         }
         serviceScope.launch {
             playbackPreferences.bassBoostStrength.collect { bass ->
+                processorA.setBassBoost(bass)
+                processorB.setBassBoost(bass)
                 effectController.setBassBoost(bass)
             }
         }
         serviceScope.launch {
             playbackPreferences.virtualizerStrength.collect { virt ->
+                processorA.setVirtualizer(virt)
+                processorB.setVirtualizer(virt)
                 effectController.setVirtualizer(virt)
             }
         }
@@ -100,8 +104,11 @@ class MusicPlaybackService : MediaSessionService() {
             }
         }
 
+        crossfadePlayer.onPlayerSwapped = { newPlayer ->
+            mediaSession?.setPlayer(newPlayer)
+        }
+
         crossfadePlayer.onSongTransition = { song ->
-            updateMediaMetadata(song)
             serviceScope.launch {
                 songRepository.recordPlay(song.id)
             }
@@ -140,7 +147,7 @@ class MusicPlaybackService : MediaSessionService() {
             }
         }
 
-        mediaSession = MediaSession.Builder(this, crossfadePlayer)
+        mediaSession = MediaSession.Builder(this, crossfadePlayer.activePlayer)
             .setCallback(callback)
             .apply {
                 if (sessionActivityIntent != null) {
@@ -150,22 +157,6 @@ class MusicPlaybackService : MediaSessionService() {
             .build()
     }
 
-    private fun updateMediaMetadata(song: Song) {
-        val metadata = MediaMetadata.Builder()
-            .setTitle(song.title)
-            .setArtist(song.artistName)
-            .setAlbumTitle(song.albumName)
-            .setArtworkUri(android.net.Uri.parse("content://media/external/audio/albumart/${song.albumId}"))
-            .build()
-
-        val mediaItem = MediaItem.Builder()
-            .setMediaId(song.id.toString())
-            .setUri(song.contentUri)
-            .setMediaMetadata(metadata)
-            .build()
-
-        crossfadePlayer.setMediaItem(mediaItem)
-    }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
         return mediaSession

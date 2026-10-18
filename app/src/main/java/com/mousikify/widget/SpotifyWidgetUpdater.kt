@@ -10,8 +10,10 @@ import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.widget.RemoteViews
+import androidx.compose.ui.graphics.toArgb
 import com.mousikify.MainActivity
 import com.mousikify.R
+import com.mousikify.core.designsystem.palette.PaletteExtractor
 import com.mousikify.core.model.Song
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,6 +24,7 @@ import java.io.File
 object SpotifyWidgetUpdater {
 
     private val scope = CoroutineScope(Dispatchers.IO)
+    private const val DEFAULT_WIDGET_BG_COLOR = 0xFF242424.toInt()
 
     fun updateWidget(
         context: Context,
@@ -35,6 +38,7 @@ object SpotifyWidgetUpdater {
 
         scope.launch {
             val views = RemoteViews(context.packageName, R.layout.widget_spotify_player)
+            var widgetBgColor = DEFAULT_WIDGET_BG_COLOR
 
             if (song != null) {
                 views.setTextViewText(R.id.widget_song_title, song.title)
@@ -48,6 +52,12 @@ object SpotifyWidgetUpdater {
                 val bitmap = loadArtworkBitmap(context, song)
                 if (bitmap != null) {
                     views.setImageViewBitmap(R.id.widget_album_art, bitmap)
+                    try {
+                        val seedColor = PaletteExtractor.extractGradientSeedColor(bitmap)
+                        widgetBgColor = seedColor.toArgb()
+                    } catch (_: Exception) {
+                        widgetBgColor = DEFAULT_WIDGET_BG_COLOR
+                    }
                 } else {
                     views.setImageViewResource(R.id.widget_album_art, R.drawable.ic_launcher_foreground)
                 }
@@ -58,11 +68,14 @@ object SpotifyWidgetUpdater {
                 views.setImageViewResource(R.id.widget_album_art, R.drawable.ic_launcher_foreground)
             }
 
+            // Tint the widget background with dynamic seed color while keeping 16dp rounded corners
+            views.setInt(R.id.widget_background, "setColorFilter", widgetBgColor)
+
             // Play / Pause button icon
             val playPauseRes = if (isPlaying) R.drawable.widget_ic_pause else R.drawable.widget_ic_play
             views.setImageViewResource(R.id.widget_btn_play_pause, playPauseRes)
 
-            // Setup pending intents for buttons
+            // Setup pending intents for buttons and background
             setupPendingIntents(context, views)
 
             // Apply updates to all widget instances
@@ -80,7 +93,11 @@ object SpotifyWidgetUpdater {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         views.setOnClickPendingIntent(R.id.widget_root, openAppPendingIntent)
+        views.setOnClickPendingIntent(R.id.widget_background, openAppPendingIntent)
+        views.setOnClickPendingIntent(R.id.widget_content, openAppPendingIntent)
         views.setOnClickPendingIntent(R.id.widget_album_art, openAppPendingIntent)
+        views.setOnClickPendingIntent(R.id.widget_song_title, openAppPendingIntent)
+        views.setOnClickPendingIntent(R.id.widget_artist_name, openAppPendingIntent)
 
         // Play/Pause intent
         val playPauseIntent = Intent(context, SpotifyWidgetProvider::class.java).apply {

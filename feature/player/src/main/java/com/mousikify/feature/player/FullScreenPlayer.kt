@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -122,6 +123,7 @@ fun FullScreenPlayer(
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
+            .background(com.mousikify.core.designsystem.theme.SpotifyBlack)
             .background(gradientBrush),
         contentPadding = PaddingValues(horizontal = 24.dp, vertical = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -131,7 +133,8 @@ fun FullScreenPlayer(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 16.dp, bottom = 20.dp),
+                    .statusBarsPadding()
+                    .padding(top = 12.dp, bottom = 20.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {

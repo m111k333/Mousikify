@@ -62,6 +62,21 @@ class PlayerViewModel @Inject constructor(
     private val _gradientColor = MutableStateFlow(SpotifyBlack)
     private var lastLoadedSongId: Long? = null
 
+    companion object {
+        private val paletteColorCache = androidx.collection.LruCache<Long, Color>(64)
+    }
+
+    init {
+        viewModelScope.launch {
+            musicController.currentSong.collect { song ->
+                if (song != null && song.id != lastLoadedSongId) {
+                    lastLoadedSongId = song.id
+                    loadLyricsAndPalette(song)
+                }
+            }
+        }
+    }
+
     private val playbackTiming = combine(
         musicController.currentPositionMs,
         musicController.durationMs
@@ -84,11 +99,6 @@ class PlayerViewModel @Inject constructor(
         playbackControls,
         metadataState
     ) { song, isPlaying, (position, duration), (shuffle, repeat), (lyrics, gradient) ->
-        if (song != null && song.id != lastLoadedSongId) {
-            lastLoadedSongId = song.id
-            loadLyricsAndPalette(song)
-        }
-
         val activeIndex = if (lyrics.isNotEmpty()) {
             val idx = lyrics.indexOfLast { it.timestampMs <= position }
             idx.coerceAtLeast(0)
@@ -123,6 +133,13 @@ class PlayerViewModel @Inject constructor(
             }
             _lyrics.value = loadedLyrics
 
+            // Check palette color cache first
+            val cachedColor = paletteColorCache.get(song.id)
+            if (cachedColor != null) {
+                _gradientColor.value = cachedColor
+                return@launch
+            }
+
             // Extract dynamic palette color from embedded artwork
             val retriever = MediaMetadataRetriever()
             try {
@@ -132,21 +149,9 @@ class PlayerViewModel @Inject constructor(
                     val options = BitmapFactory.Options().apply { inSampleSize = 4 }
                     val bitmap = BitmapFactory.decodeByteArray(pictureBytes, 0, pictureBytes.size, options)
                     val color = bitmap?.let { PaletteExtractor.extractGradientSeedColor(it) } ?: SpotifyBlack
+                    paletteColorCache.put(song.id, color)
                     _gradientColor.value = color
                     bitmap?.recycle()
-
-                    // If song does not have artworkUri cached, save it and update database
-                    if (song.artworkUri.isNullOrBlank()) {
-                        try {
-                            val artDir = File(context.filesDir, "album_art")
-                            if (!artDir.exists()) artDir.mkdirs()
-                            val artFile = File(artDir, "song_${song.id}.jpg")
-                            if (!artFile.exists() || artFile.length() == 0L) {
-                                artFile.writeBytes(pictureBytes)
-                            }
-                            songRepository.updateArtworkUri(song.id, artFile.absolutePath)
-                        } catch (_: Exception) {}
-                    }
                 } else {
                     _gradientColor.value = SpotifyBlack
                 }

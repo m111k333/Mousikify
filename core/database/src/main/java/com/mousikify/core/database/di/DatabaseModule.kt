@@ -9,6 +9,7 @@ import com.mousikify.core.database.MousikifyDatabase
 import com.mousikify.core.database.dao.EqPresetDao
 import com.mousikify.core.database.dao.PlaylistDao
 import com.mousikify.core.database.dao.SongDao
+import com.mousikify.core.database.dao.TrackDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -30,6 +31,34 @@ object DatabaseModule {
         }
     }
 
+    private val MIGRATION_2_3 = object : Migration(2, 3) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("""
+                CREATE TABLE IF NOT EXISTS tracks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    uri TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    artist TEXT NOT NULL,
+                    album TEXT NOT NULL,
+                    rawGenre TEXT,
+                    normalizedGenre TEXT,
+                    year INTEGER NOT NULL,
+                    decade TEXT,
+                    durationMs INTEGER NOT NULL,
+                    rmsEnergy REAL NOT NULL,
+                    bpm INTEGER NOT NULL,
+                    vibeCategory TEXT,
+                    isAnalyzed INTEGER NOT NULL
+                )
+            """.trimIndent())
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_tracks_uri ON tracks(uri)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_tracks_decade ON tracks(decade)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_tracks_normalizedGenre ON tracks(normalizedGenre)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_tracks_vibeCategory ON tracks(vibeCategory)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_tracks_isAnalyzed ON tracks(isAnalyzed)")
+        }
+    }
+
     @Provides
     @Singleton
     fun provideMousikifyDatabase(
@@ -41,7 +70,7 @@ object DatabaseModule {
             MousikifyDatabase::class.java,
             MousikifyDatabase.DATABASE_NAME
         )
-        .addMigrations(MIGRATION_1_2)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
         .fallbackToDestructiveMigration()
         .addCallback(object : RoomDatabase.Callback() {
             override fun onCreate(db: SupportSQLiteDatabase) {
@@ -70,4 +99,7 @@ object DatabaseModule {
 
     @Provides
     fun provideEqPresetDao(database: MousikifyDatabase): EqPresetDao = database.eqPresetDao()
+
+    @Provides
+    fun provideTrackDao(database: MousikifyDatabase): TrackDao = database.trackDao()
 }

@@ -77,6 +77,7 @@ fun MainAppContainer(
 
     val showBottomBar = currentRoute in bottomNavItems.map { it.route }
     var isPlayerExpanded by remember { mutableStateOf(false) }
+    var homeResetTrigger by remember { mutableStateOf(0L) }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
@@ -99,13 +100,26 @@ fun MainAppContainer(
                             NavigationBarItem(
                                 selected = selected,
                                 onClick = {
-                                    if (currentRoute != screen.route) {
-                                        navController.navigate(screen.route) {
-                                            popUpTo(navController.graph.findStartDestination().id) {
-                                                saveState = true
+                                    if (screen == Screen.Home) {
+                                        homeResetTrigger = System.currentTimeMillis()
+                                        if (currentRoute != screen.route) {
+                                            navController.navigate(screen.route) {
+                                                popUpTo(navController.graph.findStartDestination().id) {
+                                                    saveState = false
+                                                }
+                                                launchSingleTop = true
+                                                restoreState = false
                                             }
-                                            launchSingleTop = true
-                                            restoreState = true
+                                        }
+                                    } else {
+                                        if (currentRoute != screen.route) {
+                                            navController.navigate(screen.route) {
+                                                popUpTo(navController.graph.findStartDestination().id) {
+                                                    saveState = true
+                                                }
+                                                launchSingleTop = true
+                                                restoreState = true
+                                            }
                                         }
                                     }
                                 },
@@ -139,7 +153,8 @@ fun MainAppContainer(
         ) {
             composable(Screen.Home.route) {
                 HomeRoute(
-                    onNavigateToEqualizer = { navController.navigate(Screen.Equalizer.route) }
+                    onNavigateToEqualizer = { navController.navigate(Screen.Equalizer.route) },
+                    homeResetTrigger = homeResetTrigger
                 )
             }
             composable(Screen.Search.route) {

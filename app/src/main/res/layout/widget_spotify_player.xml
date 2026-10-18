@@ -1,110 +1,124 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_root"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="@drawable/widget_background"
-    android:gravity="center_vertical"
-    android:orientation="horizontal"
-    android:paddingStart="12dp"
-    android:paddingTop="8dp"
-    android:paddingEnd="12dp"
-    android:paddingBottom="8dp">
+    android:layout_height="match_parent">
 
-    <!-- Album Art Thumbnail -->
+    <!-- Dynamic Background Layer with Rounded Corners -->
     <ImageView
-        android:id="@+id/widget_album_art"
-        android:layout_width="54dp"
-        android:layout_height="54dp"
-        android:background="@drawable/widget_art_placeholder"
-        android:contentDescription="Album Art"
-        android:scaleType="centerCrop"
-        android:src="@drawable/ic_launcher_foreground" />
+        android:id="@+id/widget_background"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="fitXY"
+        android:src="@drawable/widget_background" />
 
-    <!-- Title and Artist -->
     <LinearLayout
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="12dp"
-        android:layout_marginEnd="8dp"
-        android:layout_weight="1"
-        android:orientation="vertical">
-
-        <TextView
-            android:id="@+id/widget_song_title"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:ellipsize="end"
-            android:maxLines="1"
-            android:text="Mousikify"
-            android:textColor="#FFFFFF"
-            android:textSize="15sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:id="@+id/widget_artist_name"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:ellipsize="end"
-            android:maxLines="1"
-            android:text="Local Music"
-            android:textColor="#B3B3B3"
-            android:textSize="12sp" />
-    </LinearLayout>
-
-    <!-- Controls Row: Favorite, Previous, Play/Pause, Next -->
-    <LinearLayout
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+        android:id="@+id/widget_content"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
         android:gravity="center_vertical"
-        android:orientation="horizontal">
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="8dp">
 
-        <!-- Favorite Heart Button -->
-        <ImageButton
-            android:id="@+id/widget_btn_favorite"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Favorite"
-            android:padding="6dp"
-            android:scaleType="fitCenter"
-            android:src="@drawable/widget_ic_favorite_border" />
+        <!-- Album Art Thumbnail -->
+        <ImageView
+            android:id="@+id/widget_album_art"
+            android:layout_width="54dp"
+            android:layout_height="54dp"
+            android:background="@drawable/widget_art_placeholder"
+            android:contentDescription="Album Art"
+            android:scaleType="centerCrop"
+            android:src="@drawable/ic_launcher_foreground" />
 
-        <!-- Previous Button -->
-        <ImageButton
-            android:id="@+id/widget_btn_prev"
-            android:layout_width="38dp"
-            android:layout_height="38dp"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Previous Track"
-            android:padding="6dp"
-            android:scaleType="fitCenter"
-            android:src="@drawable/widget_ic_skip_prev" />
+        <!-- Title and Artist -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="8dp"
+            android:layout_weight="1"
+            android:orientation="vertical">
 
-        <!-- Play / Pause Circular Button -->
-        <ImageButton
-            android:id="@+id/widget_btn_play_pause"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
-            android:layout_marginStart="4dp"
-            android:layout_marginEnd="4dp"
-            android:background="@drawable/widget_play_circle"
-            android:contentDescription="Play/Pause"
-            android:padding="10dp"
-            android:scaleType="fitCenter"
-            android:src="@drawable/widget_ic_play" />
+            <TextView
+                android:id="@+id/widget_song_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="Mousikify"
+                android:textColor="#FFFFFF"
+                android:textSize="15sp"
+                android:textStyle="bold" />
 
-        <!-- Next Button -->
-        <ImageButton
-            android:id="@+id/widget_btn_next"
-            android:layout_width="38dp"
-            android:layout_height="38dp"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Next Track"
-            android:padding="6dp"
-            android:scaleType="fitCenter"
-            android:src="@drawable/widget_ic_skip_next" />
+            <TextView
+                android:id="@+id/widget_artist_name"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="Local Music"
+                android:textColor="#B3B3B3"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <!-- Controls Row: Favorite, Previous, Play/Pause, Next -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <!-- Favorite Heart Button -->
+            <ImageButton
+                android:id="@+id/widget_btn_favorite"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Favorite"
+                android:padding="6dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/widget_ic_favorite_border" />
+
+            <!-- Previous Button -->
+            <ImageButton
+                android:id="@+id/widget_btn_prev"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Previous Track"
+                android:padding="6dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/widget_ic_skip_prev" />
+
+            <!-- Play / Pause Circular Button -->
+            <ImageButton
+                android:id="@+id/widget_btn_play_pause"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="4dp"
+                android:layout_marginEnd="4dp"
+                android:background="@drawable/widget_play_circle"
+                android:contentDescription="Play/Pause"
+                android:padding="10dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/widget_ic_play" />
+
+            <!-- Next Button -->
+            <ImageButton
+                android:id="@+id/widget_btn_next"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Next Track"
+                android:padding="6dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/widget_ic_skip_next" />
+        </LinearLayout>
+
     </LinearLayout>
 
-</LinearLayout>
+</FrameLayout>

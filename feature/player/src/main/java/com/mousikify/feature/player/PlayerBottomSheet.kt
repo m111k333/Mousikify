@@ -9,8 +9,10 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import com.mousikify.core.designsystem.theme.SpotifyBlack
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -70,7 +72,9 @@ fun FullScreenPlayerOverlay(
             targetOffsetY = { it },
             animationSpec = tween(durationMillis = 220, easing = FastOutLinearInEasing)
         ) + fadeOut(animationSpec = tween(durationMillis = 160)),
-        modifier = modifier.fillMaxSize()
+        modifier = modifier
+            .fillMaxSize()
+            .background(SpotifyBlack)
     ) {
         FullScreenPlayer(
             uiState = uiState,

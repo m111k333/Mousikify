@@ -66,8 +66,8 @@ fun rememberDynamicGradientBrush(
     return remember(animatedColor, bottomColor) {
         Brush.verticalGradient(
             colors = listOf(
-                animatedColor.copy(alpha = 0.85f),
-                bottomColor.copy(alpha = 0.95f),
+                animatedColor,
+                bottomColor,
                 bottomColor
             )
         )

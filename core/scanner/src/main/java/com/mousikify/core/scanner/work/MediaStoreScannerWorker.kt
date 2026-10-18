@@ -24,6 +24,7 @@ class MediaStoreScannerWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         return try {
             scanner.scanMediaStore()
+            AudioAnalysisWorker.enqueue(applicationContext)
             Result.success()
         } catch (e: Exception) {
             if (runAttemptCount < 3) {

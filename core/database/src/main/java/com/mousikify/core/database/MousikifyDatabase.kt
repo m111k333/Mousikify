@@ -7,11 +7,13 @@ import com.mousikify.core.database.converter.Converters
 import com.mousikify.core.database.dao.EqPresetDao
 import com.mousikify.core.database.dao.PlaylistDao
 import com.mousikify.core.database.dao.SongDao
+import com.mousikify.core.database.dao.TrackDao
 import com.mousikify.core.database.entity.EqPresetEntity
 import com.mousikify.core.database.entity.PlaylistEntity
 import com.mousikify.core.database.entity.PlaylistSongCrossRef
 import com.mousikify.core.database.entity.SongEntity
 import com.mousikify.core.database.entity.SongFtsEntity
+import com.mousikify.core.database.entity.TrackEntity
 
 @Database(
     entities = [
@@ -19,9 +21,10 @@ import com.mousikify.core.database.entity.SongFtsEntity
         SongFtsEntity::class,
         PlaylistEntity::class,
         PlaylistSongCrossRef::class,
-        EqPresetEntity::class
+        EqPresetEntity::class,
+        TrackEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -29,6 +32,7 @@ abstract class MousikifyDatabase : RoomDatabase() {
     abstract fun songDao(): SongDao
     abstract fun playlistDao(): PlaylistDao
     abstract fun eqPresetDao(): EqPresetDao
+    abstract fun trackDao(): TrackDao
 
     companion object {
         const val DATABASE_NAME = "mousikify.db"
