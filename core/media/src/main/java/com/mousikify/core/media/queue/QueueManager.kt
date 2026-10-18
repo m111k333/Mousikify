@@ -237,6 +237,23 @@ class QueueManager @Inject constructor(
         }
     }
 
+    fun updateFavorite(songId: Long, isFavorite: Boolean) {
+        _currentSong.value?.let { current ->
+            if (current.id == songId) {
+                _currentSong.value = current.copy(isFavorite = isFavorite)
+            }
+        }
+        val updatedList = _currentQueue.value.map { song ->
+            if (song.id == songId) song.copy(isFavorite = isFavorite) else song
+        }
+        _currentQueue.value = updatedList
+        for (i in _originalQueue.indices) {
+            if (_originalQueue[i].id == songId) {
+                _originalQueue[i] = _originalQueue[i].copy(isFavorite = isFavorite)
+            }
+        }
+    }
+
     private fun persistQueueState() {
         val ids = _currentQueue.value.map { it.id }
         val idx = _currentIndex.value

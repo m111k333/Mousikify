@@ -17,6 +17,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.activity.compose.BackHandler
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 
@@ -28,6 +29,11 @@ fun PlayerBottomSheet(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var isExpanded by remember { mutableStateOf(false) }
+
+    // Intercept back button when full-screen player is open so it collapses back to mini player
+    BackHandler(enabled = isExpanded) {
+        isExpanded = false
+    }
 
     if (uiState.currentSong == null) return
 
@@ -44,7 +50,9 @@ fun PlayerBottomSheet(
                 progressFraction = progressFraction,
                 onClick = { isExpanded = true },
                 onPlayPauseClick = { viewModel.onIntent(PlayerIntent.TogglePlayPause) },
-                onFavoriteClick = { viewModel.onIntent(PlayerIntent.ToggleFavorite) }
+                onFavoriteClick = { viewModel.onIntent(PlayerIntent.ToggleFavorite) },
+                onSkipNext = { viewModel.onIntent(PlayerIntent.SkipToNext) },
+                onSkipPrevious = { viewModel.onIntent(PlayerIntent.SkipToPrevious) }
             )
         }
 

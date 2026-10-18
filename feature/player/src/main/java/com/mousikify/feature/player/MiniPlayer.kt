@@ -37,12 +37,23 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.mousikify.core.designsystem.component.MarqueeText
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.layout.offset
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.IntOffset
 import com.mousikify.core.designsystem.theme.SpotifyCardBackground
 import com.mousikify.core.designsystem.theme.SpotifyGreen
 import com.mousikify.core.designsystem.theme.SpotifySurfaceElevated
 import com.mousikify.core.designsystem.theme.SpotifyTextPrimary
 import com.mousikify.core.designsystem.theme.SpotifyTextSecondary
 import com.mousikify.core.model.Song
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 @Composable
 fun MiniPlayer(
@@ -52,17 +63,49 @@ fun MiniPlayer(
     onClick: () -> Unit,
     onPlayPauseClick: () -> Unit,
     onFavoriteClick: () -> Unit,
+    onSkipNext: () -> Unit = {},
+    onSkipPrevious: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     if (song == null) return
+
+    val coroutineScope = rememberCoroutineScope()
+    val offsetX = remember { Animatable(0f) }
 
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(58.dp)
             .padding(horizontal = 8.dp)
+            .offset { IntOffset(offsetX.value.roundToInt(), 0) }
             .clip(RoundedCornerShape(8.dp))
             .background(Color(0xFF282828))
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures(
+                    onDragEnd = {
+                        coroutineScope.launch {
+                            val current = offsetX.value
+                            if (current < -100f) {
+                                onSkipNext()
+                            } else if (current > 100f) {
+                                onSkipPrevious()
+                            }
+                            offsetX.animateTo(0f, animationSpec = spring(stiffness = Spring.StiffnessMediumLow))
+                        }
+                    },
+                    onDragCancel = {
+                        coroutineScope.launch {
+                            offsetX.animateTo(0f, animationSpec = spring(stiffness = Spring.StiffnessMediumLow))
+                        }
+                    },
+                    onHorizontalDrag = { change, dragAmount ->
+                        change.consume()
+                        coroutineScope.launch {
+                            offsetX.snapTo(offsetX.value + dragAmount)
+                        }
+                    }
+                )
+            }
             .clickable(onClick = onClick)
     ) {
         Row(

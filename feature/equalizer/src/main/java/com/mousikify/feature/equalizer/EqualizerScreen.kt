@@ -47,6 +47,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.mousikify.core.designsystem.theme.SpotifyBackground
+import androidx.activity.compose.BackHandler
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import com.mousikify.core.designsystem.theme.SpotifyCardBackground
 import com.mousikify.core.designsystem.theme.SpotifyGreen
 import com.mousikify.core.designsystem.theme.SpotifySurfaceElevated
@@ -57,12 +62,15 @@ val EQ_LABELS = listOf("31Hz", "62Hz", "125Hz", "250Hz", "500Hz", "1kHz", "2kHz"
 
 @Composable
 fun EqualizerRoute(
+    onBackClick: () -> Unit = {},
     viewModel: EqualizerViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    BackHandler(onBack = onBackClick)
     EqualizerScreen(
         uiState = uiState,
-        onIntent = viewModel::onIntent
+        onIntent = viewModel::onIntent,
+        onBackClick = onBackClick
     )
 }
 
@@ -70,6 +78,7 @@ fun EqualizerRoute(
 fun EqualizerScreen(
     uiState: EqualizerUiState,
     onIntent: (EqualizerIntent) -> Unit,
+    onBackClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var showSaveDialog by remember { mutableStateOf(false) }
@@ -87,6 +96,14 @@ fun EqualizerScreen(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                IconButton(onClick = onBackClick) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = SpotifyTextPrimary
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(text = "Equalizer", style = MaterialTheme.typography.headlineLarge)
                     Text(

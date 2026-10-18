@@ -64,21 +64,40 @@ class MusicPlaybackService : MediaSessionService() {
             audioEffectController = effectController
         )
 
-        // Load EQ settings from preferences
+        // Continuously observe and apply EQ & DSP settings in real-time
         serviceScope.launch {
-            val enabled = playbackPreferences.eqEnabled.first()
-            processorA.setEnabled(enabled)
-            processorB.setEnabled(enabled)
-
-            val bass = playbackPreferences.bassBoostStrength.first()
-            val virt = playbackPreferences.virtualizerStrength.first()
-            val reverb = playbackPreferences.reverbPreset.first()
-            effectController.setBassBoost(bass)
-            effectController.setVirtualizer(virt)
-            effectController.setReverb(reverb)
-
-            val crossfade = playbackPreferences.crossfadeDurationMs.first()
-            crossfadePlayer.crossfadeDurationMs = crossfade
+            playbackPreferences.eqEnabled.collect { enabled ->
+                processorA.setEnabled(enabled)
+                processorB.setEnabled(enabled)
+                effectController.setEnabled(enabled)
+            }
+        }
+        serviceScope.launch {
+            playbackPreferences.eqBandLevels.collect { bands ->
+                processorA.setAllBandLevels(bands)
+                processorB.setAllBandLevels(bands)
+                effectController.setBandLevels(bands)
+            }
+        }
+        serviceScope.launch {
+            playbackPreferences.bassBoostStrength.collect { bass ->
+                effectController.setBassBoost(bass)
+            }
+        }
+        serviceScope.launch {
+            playbackPreferences.virtualizerStrength.collect { virt ->
+                effectController.setVirtualizer(virt)
+            }
+        }
+        serviceScope.launch {
+            playbackPreferences.reverbPreset.collect { reverb ->
+                effectController.setReverb(reverb)
+            }
+        }
+        serviceScope.launch {
+            playbackPreferences.crossfadeDurationMs.collect { crossfade ->
+                crossfadePlayer.crossfadeDurationMs = crossfade
+            }
         }
 
         crossfadePlayer.onSongTransition = { song ->
@@ -103,8 +122,10 @@ class MusicPlaybackService : MediaSessionService() {
                     CUSTOM_ACTION_TOGGLE_FAVORITE -> {
                         val currentSong = queueManager.currentSong.value
                         if (currentSong != null) {
+                            val newFav = !currentSong.isFavorite
+                            queueManager.updateFavorite(currentSong.id, newFav)
                             serviceScope.launch {
-                                songRepository.toggleFavorite(currentSong.id, !currentSong.isFavorite)
+                                songRepository.toggleFavorite(currentSong.id, newFav)
                             }
                         }
                     }

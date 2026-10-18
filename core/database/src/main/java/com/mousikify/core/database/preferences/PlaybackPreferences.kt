@@ -38,6 +38,7 @@ class PlaybackPreferences @Inject constructor(
         val BASS_BOOST_STRENGTH = intPreferencesKey("bass_boost_strength")
         val VIRTUALIZER_STRENGTH = intPreferencesKey("virtualizer_strength")
         val REVERB_PRESET = intPreferencesKey("reverb_preset")
+        val EQ_BAND_LEVELS = stringPreferencesKey("eq_band_levels")
         val CUSTOM_FOLDER_URIS = stringSetPreferencesKey("custom_folder_uris")
     }
 
@@ -62,6 +63,19 @@ class PlaybackPreferences @Inject constructor(
     val bassBoostStrength: Flow<Int> = dataStore.data.map { it[PreferencesKeys.BASS_BOOST_STRENGTH] ?: 0 }
     val virtualizerStrength: Flow<Int> = dataStore.data.map { it[PreferencesKeys.VIRTUALIZER_STRENGTH] ?: 0 }
     val reverbPreset: Flow<Short> = dataStore.data.map { (it[PreferencesKeys.REVERB_PRESET] ?: 0).toShort() }
+    val eqBandLevels: Flow<List<Int>> = dataStore.data.map { prefs ->
+        val str = prefs[PreferencesKeys.EQ_BAND_LEVELS] ?: ""
+        if (str.isEmpty()) List(10) { 0 }
+        else str.split(",").mapNotNull { it.trim().toIntOrNull() }.take(10).let {
+            if (it.size < 10) it + List(10 - it.size) { 0 } else it
+        }
+    }
+
+    suspend fun setEqBandLevels(levels: List<Int>) {
+        dataStore.edit {
+            it[PreferencesKeys.EQ_BAND_LEVELS] = levels.take(10).joinToString(",")
+        }
+    }
 
     suspend fun saveLastPlaybackState(songId: Long, positionMs: Long) {
         dataStore.edit {

@@ -87,10 +87,16 @@ class EqualizerViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            val presetId = preferences.activeEqPresetId.first()
-            val preset = eqRepository.getPresetById(presetId).first()
-            if (preset != null) {
-                _bandLevels.value = preset.bandLevelsMb
+            val savedBands = preferences.eqBandLevels.first()
+            if (savedBands.any { it != 0 }) {
+                _bandLevels.value = savedBands
+            } else {
+                val presetId = preferences.activeEqPresetId.first()
+                val preset = eqRepository.getPresetById(presetId).first()
+                if (preset != null) {
+                    _bandLevels.value = preset.bandLevelsMb
+                    preferences.setEqBandLevels(preset.bandLevelsMb)
+                }
             }
         }
     }
@@ -107,6 +113,9 @@ class EqualizerViewModel @Inject constructor(
                 if (intent.bandIndex in list.indices) {
                     list[intent.bandIndex] = intent.levelMb
                     _bandLevels.value = list
+                    viewModelScope.launch {
+                        preferences.setEqBandLevels(list)
+                    }
                 }
             }
             is EqualizerIntent.SetBassBoost -> {
@@ -132,6 +141,7 @@ class EqualizerViewModel @Inject constructor(
             is EqualizerIntent.SelectPreset -> {
                 _bandLevels.value = intent.preset.bandLevelsMb
                 viewModelScope.launch {
+                    preferences.setEqBandLevels(intent.preset.bandLevelsMb)
                     preferences.setActiveEqPresetId(intent.preset.presetId)
                     preferences.setBassBoostStrength(intent.preset.bassBoostStrength)
                     preferences.setVirtualizerStrength(intent.preset.virtualizerStrength)

@@ -129,9 +129,11 @@ class PlayerViewModel @Inject constructor(
                 retriever.setDataSource(context, Uri.parse(song.contentUri))
                 val pictureBytes = retriever.embeddedPicture
                 if (pictureBytes != null) {
-                    val bitmap = BitmapFactory.decodeByteArray(pictureBytes, 0, pictureBytes.size)
-                    val color = PaletteExtractor.extractGradientSeedColor(bitmap)
+                    val options = BitmapFactory.Options().apply { inSampleSize = 4 }
+                    val bitmap = BitmapFactory.decodeByteArray(pictureBytes, 0, pictureBytes.size, options)
+                    val color = bitmap?.let { PaletteExtractor.extractGradientSeedColor(it) } ?: SpotifyBlack
                     _gradientColor.value = color
+                    bitmap?.recycle()
 
                     // If song does not have artworkUri cached, save it and update database
                     if (song.artworkUri.isNullOrBlank()) {

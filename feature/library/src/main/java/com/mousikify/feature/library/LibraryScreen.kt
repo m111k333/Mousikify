@@ -36,6 +36,8 @@ import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.MoreVert
@@ -833,10 +835,10 @@ private fun SpotifyTrackRow(
 
         IconButton(onClick = onFavoriteToggle) {
             Icon(
-                imageVector = if (song.isFavorite) Icons.Default.CheckCircle else Icons.Default.MoreVert,
-                contentDescription = null,
+                imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                contentDescription = if (song.isFavorite) "Liked" else "Like",
                 tint = if (song.isFavorite) SpotifyGreen else SpotifyTextSecondary,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(22.dp)
             )
         }
     }

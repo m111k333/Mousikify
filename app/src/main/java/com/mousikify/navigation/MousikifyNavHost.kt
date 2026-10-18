@@ -145,7 +145,9 @@ fun MainAppContainer(
                 LibraryRoute()
             }
             composable(Screen.Equalizer.route) {
-                EqualizerRoute()
+                EqualizerRoute(
+                    onBackClick = { navController.popBackStack() }
+                )
             }
         }
     }

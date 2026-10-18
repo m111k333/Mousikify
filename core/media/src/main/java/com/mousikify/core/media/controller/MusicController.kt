@@ -186,8 +186,10 @@ class MusicController @Inject constructor(
     }
 
     fun toggleFavorite(song: Song) {
+        val newFav = !song.isFavorite
+        queueManager.updateFavorite(song.id, newFav)
         scope.launch {
-            songRepository.toggleFavorite(song.id, !song.isFavorite)
+            songRepository.toggleFavorite(song.id, newFav)
         }
     }
 }
