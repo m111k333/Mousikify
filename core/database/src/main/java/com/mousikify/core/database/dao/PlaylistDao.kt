@@ -11,14 +11,34 @@ import com.mousikify.core.database.entity.PlaylistSongCrossRef
 import com.mousikify.core.database.entity.SongEntity
 import kotlinx.coroutines.flow.Flow
 
+data class PlaylistWithCount(
+    val playlistId: Long,
+    val name: String,
+    val createdAt: Long,
+    val customCoverUri: String?,
+    val songCount: Int
+)
+
 @Dao
 interface PlaylistDao {
 
     @Query("SELECT * FROM playlists ORDER BY createdAt DESC")
     fun getAllPlaylists(): Flow<List<PlaylistEntity>>
 
+    @Query("""
+        SELECT p.playlistId, p.name, p.createdAt, p.customCoverUri, COUNT(ps.songId) as songCount
+        FROM playlists p
+        LEFT JOIN playlist_songs ps ON p.playlistId = ps.playlistId
+        GROUP BY p.playlistId
+        ORDER BY p.createdAt DESC
+    """)
+    fun getAllPlaylistsWithCount(): Flow<List<PlaylistWithCount>>
+
     @Query("SELECT * FROM playlists WHERE playlistId = :id")
     fun getPlaylistById(id: Long): Flow<PlaylistEntity?>
+
+    @Query("SELECT * FROM playlists WHERE playlistId = :id")
+    suspend fun getPlaylistByIdSync(id: Long): PlaylistEntity?
 
     @Query("SELECT * FROM playlists WHERE LOWER(name) = LOWER(:name) LIMIT 1")
     suspend fun getPlaylistByName(name: String): PlaylistEntity?
@@ -64,6 +84,7 @@ interface PlaylistDao {
 
     @Transaction
     suspend fun addSongToEndOfPlaylist(playlistId: Long, songId: Long) {
+        if (isSongInPlaylist(playlistId, songId) > 0) return
         val count = getSongCountInPlaylist(playlistId)
         insertCrossRef(
             PlaylistSongCrossRef(

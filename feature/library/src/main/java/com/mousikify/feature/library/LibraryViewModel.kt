@@ -56,7 +56,10 @@ data class LibraryUiState(
     val statusMessage: String? = null,
     val currentSongId: Long? = null,
     val isPlaying: Boolean = false,
-    val activeDetail: LibraryDetailView? = null
+    val activeDetail: LibraryDetailView? = null,
+    val songToAddToPlaylist: Song? = null,
+    val showAddToPlaylistForSelection: Boolean = false,
+    val showAddSongsPickerForPlaylist: Playlist? = null
 )
 
 sealed interface LibraryIntent {
@@ -79,6 +82,12 @@ sealed interface LibraryIntent {
     data class OpenFolder(val folder: Folder) : LibraryIntent
     data class OpenPlaylist(val playlist: Playlist) : LibraryIntent
     data object CloseDetail : LibraryIntent
+    data class ShowAddToPlaylistDialog(val song: Song?) : LibraryIntent
+    data class ShowAddToPlaylistForSelection(val show: Boolean) : LibraryIntent
+    data class ShowAddSongsPicker(val playlist: Playlist?) : LibraryIntent
+    data class AddSongToPlaylist(val playlistId: Long, val songId: Long) : LibraryIntent
+    data class RemoveSongFromPlaylist(val playlistId: Long, val songId: Long) : LibraryIntent
+    data class DeletePlaylist(val playlistId: Long) : LibraryIntent
 }
 
 @HiltViewModel
@@ -98,6 +107,9 @@ class LibraryViewModel @Inject constructor(
     private val _isScanning = MutableStateFlow(false)
     private val _statusMessage = MutableStateFlow<String?>(null)
     private val _activeDetail = MutableStateFlow<LibraryDetailView?>(null)
+    private val _songToAddToPlaylist = MutableStateFlow<Song?>(null)
+    private val _showAddToPlaylistForSelection = MutableStateFlow(false)
+    private val _showAddSongsPickerForPlaylist = MutableStateFlow<Playlist?>(null)
     private var detailJob: Job? = null
 
     private val selectionState = combine(_selectedSongIds, _showCreatePlaylistDialog) { ids, dlg ->
@@ -127,6 +139,14 @@ class LibraryViewModel @Inject constructor(
         Pair(songs, playlists)
     }
 
+    private val playlistDialogsState = combine(
+        _songToAddToPlaylist,
+        _showAddToPlaylistForSelection,
+        _showAddSongsPickerForPlaylist
+    ) { songToAdd, showSelection, pickerPlaylist ->
+        Triple(songToAdd, showSelection, pickerPlaylist)
+    }
+
     private val contentState = combine(
         _activeFilter,
         mainLibrary,
@@ -139,8 +159,9 @@ class LibraryViewModel @Inject constructor(
     val uiState: StateFlow<LibraryUiState> = combine(
         contentState,
         scanAndDetailState,
-        playbackState
-    ) { content, (isScanning, statusMessage, activeDetail), (currentSong, isPlaying) ->
+        playbackState,
+        playlistDialogsState
+    ) { content, (isScanning, statusMessage, activeDetail), (currentSong, isPlaying), (songToAdd, showSelection, pickerPlaylist) ->
         LibraryUiState(
             activeFilter = content.filter,
             songs = content.songs,
@@ -155,7 +176,10 @@ class LibraryViewModel @Inject constructor(
             statusMessage = statusMessage,
             currentSongId = currentSong?.id,
             isPlaying = isPlaying,
-            activeDetail = activeDetail
+            activeDetail = activeDetail,
+            songToAddToPlaylist = songToAdd,
+            showAddToPlaylistForSelection = showSelection,
+            showAddSongsPickerForPlaylist = pickerPlaylist
         )
     }.stateIn(
         scope = viewModelScope,
@@ -190,22 +214,65 @@ class LibraryViewModel @Inject constructor(
                 _selectedSongIds.value = uiState.value.songs.map { it.id }.toSet()
             }
             is LibraryIntent.ShowCreatePlaylist -> _showCreatePlaylistDialog.value = intent.show
+            is LibraryIntent.ShowAddToPlaylistDialog -> _songToAddToPlaylist.value = intent.song
+            is LibraryIntent.ShowAddToPlaylistForSelection -> _showAddToPlaylistForSelection.value = intent.show
+            is LibraryIntent.ShowAddSongsPicker -> _showAddSongsPickerForPlaylist.value = intent.playlist
+            is LibraryIntent.AddSongToPlaylist -> {
+                viewModelScope.launch {
+                    playlistRepository.addSongToPlaylist(intent.playlistId, intent.songId)
+                    _statusMessage.value = "Added to playlist"
+                }
+            }
+            is LibraryIntent.RemoveSongFromPlaylist -> {
+                viewModelScope.launch {
+                    playlistRepository.removeSongFromPlaylist(intent.playlistId, intent.songId)
+                    _statusMessage.value = "Removed from playlist"
+                }
+            }
+            is LibraryIntent.DeletePlaylist -> {
+                viewModelScope.launch {
+                    playlistRepository.deletePlaylist(intent.playlistId)
+                    if (_activeDetail.value is LibraryDetailView.PlaylistDetail &&
+                        (_activeDetail.value as LibraryDetailView.PlaylistDetail).playlist.id == intent.playlistId
+                    ) {
+                        _activeDetail.value = null
+                    }
+                    _statusMessage.value = "Playlist deleted"
+                }
+            }
             is LibraryIntent.CreatePlaylist -> {
                 viewModelScope.launch {
                     val id = playlistRepository.createPlaylist(intent.name)
-                    _selectedSongIds.value.forEach { songId ->
-                        playlistRepository.addSongToPlaylist(id, songId)
+                    var addedCount = 0
+                    if (_selectedSongIds.value.isNotEmpty()) {
+                        addedCount = _selectedSongIds.value.size
+                        _selectedSongIds.value.forEach { songId ->
+                            playlistRepository.addSongToPlaylist(id, songId)
+                        }
+                        _selectedSongIds.value = emptySet()
+                    } else if (_songToAddToPlaylist.value != null) {
+                        addedCount = 1
+                        playlistRepository.addSongToPlaylist(id, _songToAddToPlaylist.value!!.id)
+                        _songToAddToPlaylist.value = null
                     }
-                    _selectedSongIds.value = emptySet()
                     _showCreatePlaylistDialog.value = false
+                    _showAddToPlaylistForSelection.value = false
+                    _statusMessage.value = if (addedCount > 0) {
+                        "Created playlist '${intent.name}' with $addedCount songs"
+                    } else {
+                        "Created playlist '${intent.name}'"
+                    }
                 }
             }
             is LibraryIntent.AddSelectedToPlaylist -> {
                 viewModelScope.launch {
-                    _selectedSongIds.value.forEach { songId ->
+                    val ids = _selectedSongIds.value.toList()
+                    ids.forEach { songId ->
                         playlistRepository.addSongToPlaylist(intent.playlistId, songId)
                     }
                     _selectedSongIds.value = emptySet()
+                    _showAddToPlaylistForSelection.value = false
+                    _statusMessage.value = "Added ${ids.size} songs to playlist"
                 }
             }
             is LibraryIntent.ToggleFavorite -> musicController.toggleFavorite(intent.song)

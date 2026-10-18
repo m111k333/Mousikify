@@ -1,6 +1,7 @@
 package com.mousikify.core.database.repository
 
 import com.mousikify.core.database.dao.PlaylistDao
+import com.mousikify.core.database.dao.SongDao
 import com.mousikify.core.database.entity.PlaylistEntity
 import com.mousikify.core.database.entity.SongEntity
 import com.mousikify.core.model.Playlist
@@ -12,16 +13,17 @@ import javax.inject.Singleton
 
 @Singleton
 class PlaylistRepository @Inject constructor(
-    private val playlistDao: PlaylistDao
+    private val playlistDao: PlaylistDao,
+    private val songDao: SongDao
 ) {
-    val playlists: Flow<List<Playlist>> = playlistDao.getAllPlaylists().map { entities ->
-        entities.map { entity ->
+    val playlists: Flow<List<Playlist>> = playlistDao.getAllPlaylistsWithCount().map { list ->
+        list.map { entity ->
             Playlist(
                 id = entity.playlistId,
                 name = entity.name,
                 createdAt = entity.createdAt,
                 customCoverUri = entity.customCoverUri,
-                songCount = 0
+                songCount = entity.songCount
             )
         }
     }
@@ -59,6 +61,17 @@ class PlaylistRepository @Inject constructor(
 
     suspend fun addSongToPlaylist(playlistId: Long, songId: Long) {
         playlistDao.addSongToEndOfPlaylist(playlistId, songId)
+        val playlist = playlistDao.getPlaylistByIdSync(playlistId)
+        if (playlist != null && playlist.customCoverUri.isNullOrBlank()) {
+            val song = songDao.getSongByIdSync(songId)
+            if (song != null && !song.artworkUri.isNullOrBlank()) {
+                playlistDao.updatePlaylist(playlist.copy(customCoverUri = song.artworkUri))
+            }
+        }
+    }
+
+    suspend fun isSongInPlaylist(playlistId: Long, songId: Long): Boolean {
+        return playlistDao.isSongInPlaylist(playlistId, songId) > 0
     }
 
     suspend fun removeSongFromPlaylist(playlistId: Long, songId: Long) {
