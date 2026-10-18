@@ -30,9 +30,11 @@ fun PlayerBottomSheet(
     val uiState by viewModel.uiState.collectAsState()
     var isExpanded by remember { mutableStateOf(false) }
 
-    // Intercept back button when full-screen player is open so it collapses back to mini player
-    BackHandler(enabled = isExpanded) {
-        isExpanded = false
+    // Intercept back button with top priority when full-screen player is open
+    if (isExpanded) {
+        BackHandler {
+            isExpanded = false
+        }
     }
 
     if (uiState.currentSong == null) return

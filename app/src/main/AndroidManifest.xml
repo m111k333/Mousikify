@@ -17,9 +17,9 @@
     <application
         android:name=".MousikifyApplication"
         android:allowBackup="true"
-        android:icon="@android:drawable/ic_media_play"
+        android:icon="@mipmap/ic_launcher"
         android:label="Mousikify"
-        android:roundIcon="@android:drawable/ic_media_play"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:requestLegacyExternalStorage="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
@@ -42,6 +42,22 @@
                 <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
         </service>
+
+        <!-- Spotify-Identical Home Screen Playback Widget -->
+        <receiver
+            android:name="com.mousikify.widget.SpotifyWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.mousikify.widget.ACTION_PLAY_PAUSE" />
+                <action android:name="com.mousikify.widget.ACTION_SKIP_NEXT" />
+                <action android:name="com.mousikify.widget.ACTION_SKIP_PREV" />
+                <action android:name="com.mousikify.widget.ACTION_TOGGLE_FAVORITE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_spotify_player_info" />
+        </receiver>
 
     </application>
 

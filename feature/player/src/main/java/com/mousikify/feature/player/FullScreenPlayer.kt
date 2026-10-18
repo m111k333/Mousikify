@@ -74,6 +74,9 @@ import com.mousikify.core.designsystem.theme.SpotifyTextPrimary
 import com.mousikify.core.designsystem.theme.SpotifyTextSecondary
 import com.mousikify.core.model.RepeatMode
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+
 @Composable
 fun FullScreenPlayerRoute(
     onCollapse: () -> Unit,
@@ -97,6 +100,8 @@ fun FullScreenPlayer(
     onNavigateToEqualizer: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    BackHandler(onBack = onCollapse)
+
     val song = uiState.currentSong ?: return
     val gradientBrush = rememberDynamicGradientBrush(seedColor = uiState.gradientColor)
 
