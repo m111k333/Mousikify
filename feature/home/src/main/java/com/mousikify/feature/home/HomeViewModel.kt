@@ -9,12 +9,14 @@ import com.mousikify.core.database.preferences.PlaybackPreferences
 import com.mousikify.core.database.repository.PlaylistRepository
 import com.mousikify.core.database.repository.SongRepository
 import com.mousikify.core.media.controller.MusicController
+import com.mousikify.core.model.Album
 import com.mousikify.core.model.Playlist
 import com.mousikify.core.model.Song
 import com.mousikify.core.scanner.indexer.MediaStoreScanner
 import com.mousikify.core.scanner.indexer.SafFolderScanner
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -33,6 +35,13 @@ data class SmartMix(
     val songs: List<Song>
 )
 
+sealed interface HomeDetailView {
+    data class PlaylistDetail(val playlist: Playlist, val songs: List<Song>) : HomeDetailView
+    data class AlbumDetail(val album: Album, val songs: List<Song>) : HomeDetailView
+    data class LikedSongsDetail(val songs: List<Song>) : HomeDetailView
+    data class MixDetail(val mix: SmartMix, val songs: List<Song>) : HomeDetailView
+}
+
 data class HomeUiState(
     val greeting: String = "",
     val totalSongCount: Int = 0,
@@ -40,17 +49,27 @@ data class HomeUiState(
     val recentlyAdded: List<Song> = emptyList(),
     val forgottenFavorites: List<Song> = emptyList(),
     val playlists: List<Playlist> = emptyList(),
+    val albums: List<Album> = emptyList(),
     val smartMixes: List<SmartMix> = emptyList(),
     val likedCount: Int = 0,
     val currentSongId: Long? = null,
     val isPlaying: Boolean = false,
+    val isShuffleEnabled: Boolean = false,
     val isLoading: Boolean = false,
     val isScanning: Boolean = false,
-    val statusMessage: String? = null
+    val statusMessage: String? = null,
+    val activeDetail: HomeDetailView? = null
 )
 
 sealed interface HomeIntent {
     data class PlaySong(val song: Song, val queue: List<Song>) : HomeIntent
+    data class PlayAll(val songs: List<Song>, val startIndex: Int = 0) : HomeIntent
+    data class ToggleShuffle(val songs: List<Song>? = null) : HomeIntent
+    data class OpenPlaylist(val playlist: Playlist) : HomeIntent
+    data class OpenAlbum(val album: Album) : HomeIntent
+    data object OpenLikedSongs : HomeIntent
+    data class OpenMix(val mix: SmartMix) : HomeIntent
+    data object CloseDetail : HomeIntent
     data class PlayMix(val mix: SmartMix) : HomeIntent
     data class PlayPlaylist(val playlist: Playlist) : HomeIntent
     data class ToggleFavorite(val song: Song) : HomeIntent
@@ -83,47 +102,67 @@ class HomeViewModel @Inject constructor(
 
     private val _isScanning = MutableStateFlow(false)
     private val _statusMessage = MutableStateFlow<String?>(null)
+    private val _activeDetail = MutableStateFlow<HomeDetailView?>(null)
+    private var detailJob: Job? = null
 
-    private val playbackState = combine(musicController.currentSong, musicController.isPlaying) { song, isPlaying ->
-        Pair(song, isPlaying)
+    private val playbackState = combine(
+        musicController.currentSong,
+        musicController.isPlaying,
+        musicController.isShuffleEnabled
+    ) { song, isPlaying, shuffle ->
+        Triple(song, isPlaying, shuffle)
     }
 
-    private val scanState = combine(_isScanning, _statusMessage) { scanning, msg ->
-        Pair(scanning, msg)
+    private val scanAndDetailState = combine(
+        _isScanning,
+        _statusMessage,
+        _activeDetail
+    ) { scanning, msg, detail ->
+        Triple(scanning, msg, detail)
     }
 
-    private val songsAndPlaylists = combine(
+    private val mediaCollections = combine(
         songRepository.allSongs,
         playlistRepository.playlists,
-        songRepository.favorites
-    ) { allSongs, playlists, favorites ->
-        Triple(allSongs, playlists, favorites)
+        songRepository.favorites,
+        songRepository.albums
+    ) { allSongs, playlists, favorites, albums ->
+        HomeMediaData(allSongs, playlists, favorites, albums)
+    }
+
+    private val historyData = combine(
+        songRepository.recentlyPlayed,
+        songRepository.forgottenFavorites
+    ) { recent, forgotten ->
+        Pair(recent, forgotten)
     }
 
     val uiState: StateFlow<HomeUiState> = combine(
-        songsAndPlaylists,
-        songRepository.recentlyPlayed,
-        songRepository.forgottenFavorites,
+        mediaCollections,
+        historyData,
         playbackState,
-        scanState
-    ) { (allSongs, playlists, favorites), recent, forgotten, (currentSong, isPlaying), (isScanning, statusMsg) ->
-        val mixes = generateSmartMixes(allSongs, favorites)
-        val recentlyAdded = allSongs.sortedByDescending { it.dateAdded }.take(20)
+        scanAndDetailState
+    ) { media, (recent, forgotten), (currentSong, isPlaying, isShuffle), (isScanning, statusMsg, activeDetail) ->
+        val mixes = generateSmartMixes(media.songs, media.favorites)
+        val recentlyAdded = media.songs.sortedByDescending { it.dateAdded }.take(20)
 
         HomeUiState(
             greeting = greeting,
-            totalSongCount = allSongs.size,
+            totalSongCount = media.songs.size,
             recentlyPlayed = recent,
             recentlyAdded = recentlyAdded,
             forgottenFavorites = forgotten,
-            playlists = playlists,
+            playlists = media.playlists,
+            albums = media.albums,
             smartMixes = mixes,
-            likedCount = favorites.size,
+            likedCount = media.favorites.size,
             currentSongId = currentSong?.id,
             isPlaying = isPlaying,
+            isShuffleEnabled = isShuffle,
             isLoading = false,
             isScanning = isScanning,
-            statusMessage = statusMsg
+            statusMessage = statusMsg,
+            activeDetail = activeDetail
         )
     }.stateIn(
         scope = viewModelScope,
@@ -207,6 +246,44 @@ class HomeViewModel @Inject constructor(
             is HomeIntent.PlaySong -> {
                 musicController.playQueue(intent.queue, intent.queue.indexOfFirst { it.id == intent.song.id }.coerceAtLeast(0))
             }
+            is HomeIntent.PlayAll -> {
+                musicController.playQueue(intent.songs, intent.startIndex.coerceAtLeast(0))
+            }
+            is HomeIntent.ToggleShuffle -> {
+                handleToggleShuffle(intent.songs)
+            }
+            is HomeIntent.OpenPlaylist -> {
+                detailJob?.cancel()
+                detailJob = viewModelScope.launch {
+                    playlistRepository.getPlaylistSongs(intent.playlist.id).collect { songs ->
+                        _activeDetail.value = HomeDetailView.PlaylistDetail(intent.playlist, songs)
+                    }
+                }
+            }
+            is HomeIntent.OpenAlbum -> {
+                detailJob?.cancel()
+                detailJob = viewModelScope.launch {
+                    songRepository.getSongsByAlbum(intent.album.id).collect { songs ->
+                        _activeDetail.value = HomeDetailView.AlbumDetail(intent.album, songs)
+                    }
+                }
+            }
+            is HomeIntent.OpenLikedSongs -> {
+                detailJob?.cancel()
+                detailJob = viewModelScope.launch {
+                    songRepository.favorites.collect { favorites ->
+                        _activeDetail.value = HomeDetailView.LikedSongsDetail(favorites)
+                    }
+                }
+            }
+            is HomeIntent.OpenMix -> {
+                detailJob?.cancel()
+                _activeDetail.value = HomeDetailView.MixDetail(intent.mix, intent.mix.songs)
+            }
+            is HomeIntent.CloseDetail -> {
+                detailJob?.cancel()
+                _activeDetail.value = null
+            }
             is HomeIntent.PlayMix -> {
                 if (intent.mix.songs.isNotEmpty()) {
                     musicController.playQueue(intent.mix.songs, 0)
@@ -271,4 +348,31 @@ class HomeViewModel @Inject constructor(
             is HomeIntent.DismissStatusMessage -> _statusMessage.value = null
         }
     }
+
+    private fun handleToggleShuffle(songs: List<Song>?) {
+        if (musicController.isShuffleEnabled.value) {
+            musicController.toggleShuffle()
+        } else {
+            if (!songs.isNullOrEmpty()) {
+                val currentQueueIds = musicController.currentQueue.value.map { it.id }
+                val targetIds = songs.map { it.id }
+                if (currentQueueIds.isNotEmpty() && currentQueueIds == targetIds) {
+                    musicController.toggleShuffle()
+                } else {
+                    musicController.setShuffleEnabled(true)
+                    val startIndex = songs.indices.random()
+                    musicController.playQueue(songs, startIndex)
+                }
+            } else {
+                musicController.toggleShuffle()
+            }
+        }
+    }
 }
+
+private data class HomeMediaData(
+    val songs: List<Song>,
+    val playlists: List<Playlist>,
+    val favorites: List<Song>,
+    val albums: List<Album>
+)

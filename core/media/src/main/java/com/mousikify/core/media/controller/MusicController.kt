@@ -177,6 +177,10 @@ class MusicController @Inject constructor(
         }
     }
 
+    fun setShuffleEnabled(enabled: Boolean) {
+        queueManager.setShuffleEnabled(enabled)
+    }
+
     fun toggleShuffle() {
         queueManager.toggleShuffle()
     }

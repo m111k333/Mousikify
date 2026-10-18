@@ -720,12 +720,12 @@ private fun SpotifyDetailScreen(
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     IconButton(
-                                        onClick = { onIntent(LibraryIntent.ShufflePlay(songs)) }
+                                        onClick = { onIntent(LibraryIntent.ToggleShuffle(songs)) }
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Shuffle,
                                             contentDescription = "Shuffle",
-                                            tint = SpotifyGreen,
+                                            tint = if (uiState.isShuffleEnabled) SpotifyGreen else Color(0xFF888888),
                                             modifier = Modifier.size(28.dp)
                                         )
                                     }

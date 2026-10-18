@@ -1,6 +1,6 @@
 package com.mousikify.feature.home
 
-import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -23,6 +23,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Download
@@ -34,6 +36,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -58,7 +61,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import android.net.Uri
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -71,6 +76,7 @@ import com.mousikify.core.designsystem.theme.SpotifyGreen
 import com.mousikify.core.designsystem.theme.SpotifySurfaceElevated
 import com.mousikify.core.designsystem.theme.SpotifyTextPrimary
 import com.mousikify.core.designsystem.theme.SpotifyTextSecondary
+import com.mousikify.core.model.Album
 import com.mousikify.core.model.Playlist
 import com.mousikify.core.model.Song
 
@@ -105,116 +111,128 @@ fun HomeScreen(
     onNavigateToEqualizer: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var selectedPill by remember { mutableStateOf("All") }
+    BackHandler(enabled = uiState.activeDetail != null) {
+        onIntent(HomeIntent.CloseDetail)
+    }
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(SpotifyBackground)
-    ) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = 140.dp)
+    if (uiState.activeDetail != null) {
+        HomeDetailScreen(
+            detail = uiState.activeDetail,
+            uiState = uiState,
+            onIntent = onIntent,
+            modifier = modifier
+        )
+    } else {
+        var selectedPill by remember { mutableStateOf("All") }
+
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .background(SpotifyBackground)
         ) {
-            // Spotify Top Header: Avatar + Filter Pills + Action Icons
-            item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 16.dp, end = 12.dp, top = 24.dp, bottom = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Profile Avatar
-                    Box(
-                        modifier = Modifier
-                            .size(34.dp)
-                            .clip(CircleShape)
-                            .background(Brush.linearGradient(listOf(Color(0xFF3B5998), Color(0xFF1DB954)))),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "M",
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(12.dp))
-
-                    // Pills: "All", "Music", "Playlists"
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 140.dp)
+            ) {
+                // Spotify Top Header: Avatar + Filter Pills + Action Icons
+                item {
                     Row(
-                        modifier = Modifier.weight(1f),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 16.dp, end = 12.dp, top = 24.dp, bottom = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        SpotifyPill(
-                            label = "All",
-                            isSelected = selectedPill == "All",
-                            onClick = { selectedPill = "All" }
-                        )
-                        SpotifyPill(
-                            label = "Music",
-                            isSelected = selectedPill == "Music",
-                            onClick = { selectedPill = "Music" }
-                        )
-                        SpotifyPill(
-                            label = "Playlists",
-                            isSelected = selectedPill == "Playlists",
-                            onClick = { selectedPill = "Playlists" }
-                        )
-                    }
-
-                    // Rescan icon button
-                    IconButton(onClick = { onIntent(HomeIntent.Rescan) }) {
-                        if (uiState.isScanning) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                color = SpotifyGreen,
-                                strokeWidth = 2.dp
+                        // Profile Avatar
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(Brush.linearGradient(listOf(Color(0xFF3B5998), Color(0xFF1DB954)))),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "M",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp
                             )
-                        } else {
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        // Pills: "All", "Music", "Playlists"
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            SpotifyPill(
+                                label = "All",
+                                isSelected = selectedPill == "All",
+                                onClick = { selectedPill = "All" }
+                            )
+                            SpotifyPill(
+                                label = "Music",
+                                isSelected = selectedPill == "Music",
+                                onClick = { selectedPill = "Music" }
+                            )
+                            SpotifyPill(
+                                label = "Playlists",
+                                isSelected = selectedPill == "Playlists",
+                                onClick = { selectedPill = "Playlists" }
+                            )
+                        }
+
+                        // Rescan icon button
+                        IconButton(onClick = { onIntent(HomeIntent.Rescan) }) {
+                            if (uiState.isScanning) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    color = SpotifyGreen,
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "Rescan library",
+                                    tint = SpotifyTextSecondary
+                                )
+                            }
+                        }
+
+                        // Equalizer / Settings button
+                        IconButton(onClick = onNavigateToEqualizer) {
                             Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = "Rescan library",
+                                imageVector = Icons.Default.Equalizer,
+                                contentDescription = "Equalizer",
                                 tint = SpotifyTextSecondary
                             )
                         }
                     }
-
-                    // Equalizer / Settings button
-                    IconButton(onClick = onNavigateToEqualizer) {
-                        Icon(
-                            imageVector = Icons.Default.Equalizer,
-                            contentDescription = "Equalizer",
-                            tint = SpotifyTextSecondary
-                        )
-                    }
                 }
-            }
 
-            // Dynamic Greeting: "Good morning / afternoon / evening"
-            item {
-                Text(
-                    text = uiState.greeting,
-                    style = MaterialTheme.typography.headlineLarge,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                )
-            }
+                // Dynamic Greeting: "Good morning / afternoon / evening"
+                item {
+                    Text(
+                        text = uiState.greeting,
+                        style = MaterialTheme.typography.headlineLarge,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    )
+                }
 
-            // Quick-Jump 2x3 Grid (6 Tiles)
-            item {
-                QuickJumpGrid(
-                    likedCount = uiState.likedCount,
-                    playlists = uiState.playlists,
-                    mixes = uiState.smartMixes,
-                    totalSongCount = uiState.totalSongCount,
-                    onLikedClick = { onIntent(HomeIntent.PlayLikedSongs) },
-                    onPlaylistClick = { onIntent(HomeIntent.PlayPlaylist(it)) },
-                    onMixClick = { onIntent(HomeIntent.PlayMix(it)) },
-                    onImportFolderClick = onPickFolder
-                )
-            }
+                // Quick-Jump 2x3 Grid (6 Tiles)
+                item {
+                    QuickJumpGrid(
+                        likedCount = uiState.likedCount,
+                        playlists = uiState.playlists,
+                        mixes = uiState.smartMixes,
+                        totalSongCount = uiState.totalSongCount,
+                        onLikedClick = { onIntent(HomeIntent.OpenLikedSongs) },
+                        onPlaylistClick = { onIntent(HomeIntent.OpenPlaylist(it)) },
+                        onMixClick = { onIntent(HomeIntent.OpenMix(it)) },
+                        onImportFolderClick = onPickFolder
+                    )
+                }
 
             // Empty Library Hero Banner if no tracks found
             if (uiState.totalSongCount == 0 && !uiState.isLoading) {
@@ -300,7 +318,7 @@ fun HomeScreen(
                         items(uiState.smartMixes, key = { it.id }) { mix ->
                             SpotifySmartMixCard(
                                 mix = mix,
-                                onClick = { onIntent(HomeIntent.PlayMix(mix)) }
+                                onClick = { onIntent(HomeIntent.OpenMix(mix)) }
                             )
                         }
                     }
@@ -336,7 +354,43 @@ fun HomeScreen(
                         items(uiState.playlists, key = { it.id }) { playlist ->
                             SpotifyPlaylistCard(
                                 playlist = playlist,
-                                onClick = { onIntent(HomeIntent.PlayPlaylist(playlist)) }
+                                onClick = { onIntent(HomeIntent.OpenPlaylist(playlist)) }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // "Your Albums" Carousel (Preview of user's offline albums)
+            if (uiState.albums.isNotEmpty() && (selectedPill == "All" || selectedPill == "Music")) {
+                item {
+                    Spacer(modifier = Modifier.height(28.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Your Albums",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "${uiState.albums.size} albums",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = SpotifyTextSecondary
+                        )
+                    }
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        items(uiState.albums, key = { it.id }) { album ->
+                            SpotifyAlbumCard(
+                                album = album,
+                                onClick = { onIntent(HomeIntent.OpenAlbum(album)) }
                             )
                         }
                     }
@@ -437,6 +491,7 @@ fun HomeScreen(
                 Text(uiState.statusMessage)
             }
         }
+    }
     }
 }
 
@@ -925,5 +980,302 @@ private fun SpotifySquareTrackCard(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
+    }
+}
+
+@Composable
+private fun SpotifyAlbumCard(
+    album: Album,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .width(140.dp)
+            .clickable(onClick = onClick)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(140.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(SpotifyCardBackground),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Album,
+                contentDescription = null,
+                tint = SpotifyTextSecondary.copy(alpha = 0.35f),
+                modifier = Modifier.size(40.dp)
+            )
+            AsyncImage(
+                model = album.artworkUri,
+                contentDescription = album.title,
+                modifier = Modifier.matchParentSize(),
+                contentScale = ContentScale.Crop
+            )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = album.title,
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = album.artist,
+            style = MaterialTheme.typography.bodySmall,
+            color = SpotifyTextSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun HomeDetailScreen(
+    detail: HomeDetailView,
+    uiState: HomeUiState,
+    onIntent: (HomeIntent) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val title: String
+    val subtitle: String
+    val songs: List<Song>
+    val headerArtwork: @Composable () -> Unit
+
+    when (detail) {
+        is HomeDetailView.PlaylistDetail -> {
+            title = detail.playlist.name
+            subtitle = "${detail.songs.size} songs • Playlist"
+            songs = detail.songs
+            headerArtwork = {
+                Box(
+                    modifier = Modifier
+                        .size(150.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(SpotifyCardBackground),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.QueueMusic,
+                        contentDescription = null,
+                        tint = SpotifyTextSecondary.copy(alpha = 0.35f),
+                        modifier = Modifier.size(60.dp)
+                    )
+                    val cover = detail.playlist.customCoverUri
+                        ?: detail.songs.firstOrNull { !it.artworkUri.isNullOrBlank() }?.artworkUri
+                    if (!cover.isNullOrBlank()) {
+                        AsyncImage(
+                            model = cover,
+                            contentDescription = detail.playlist.name,
+                            modifier = Modifier.matchParentSize(),
+                            contentScale = ContentScale.Crop
+                        )
+                    }
+                }
+            }
+        }
+        is HomeDetailView.AlbumDetail -> {
+            title = detail.album.title
+            subtitle = "${detail.album.artist} • ${detail.songs.size} songs"
+            songs = detail.songs
+            headerArtwork = {
+                Box(
+                    modifier = Modifier
+                        .size(150.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(SpotifyCardBackground),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Album,
+                        contentDescription = null,
+                        tint = SpotifyTextSecondary.copy(alpha = 0.35f),
+                        modifier = Modifier.size(60.dp)
+                    )
+                    AsyncImage(
+                        model = detail.album.artworkUri,
+                        contentDescription = detail.album.title,
+                        modifier = Modifier.matchParentSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                }
+            }
+        }
+        is HomeDetailView.LikedSongsDetail -> {
+            title = "Liked Songs"
+            subtitle = "${detail.songs.size} songs • Playlist"
+            songs = detail.songs
+            headerArtwork = {
+                Box(
+                    modifier = Modifier
+                        .size(150.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xFF450AF5), Color(0xFF8E8EE5), Color(0xFFC4EFD9))
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Favorite,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(64.dp)
+                    )
+                }
+            }
+        }
+        is HomeDetailView.MixDetail -> {
+            title = detail.mix.title
+            subtitle = detail.mix.subtitle
+            songs = detail.songs
+            headerArtwork = {
+                Box(
+                    modifier = Modifier
+                        .size(150.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Brush.linearGradient(detail.mix.gradientColors.map { Color(it) })),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AutoAwesome,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(64.dp)
+                    )
+                }
+            }
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(SpotifyBackground)
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Top Bar with Back Button
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 8.dp, top = 20.dp, end = 16.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = { onIntent(HomeIntent.CloseDetail) }) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = SpotifyTextPrimary,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 140.dp)
+            ) {
+                // Header section
+                item {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        headerArtwork()
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = SpotifyTextPrimary,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = SpotifyTextSecondary,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // Action Bar: Shuffle + Big Play Button
+                        if (songs.isNotEmpty()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                IconButton(
+                                    onClick = { onIntent(HomeIntent.ToggleShuffle(songs)) }
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Shuffle,
+                                        contentDescription = "Shuffle",
+                                        tint = if (uiState.isShuffleEnabled) SpotifyGreen else Color(0xFF888888),
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                }
+
+                                IconButton(
+                                    onClick = { onIntent(HomeIntent.PlayAll(songs, 0)) },
+                                    modifier = Modifier
+                                        .size(56.dp)
+                                        .clip(CircleShape)
+                                        .background(SpotifyGreen)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.PlayArrow,
+                                        contentDescription = "Play all",
+                                        tint = Color.Black,
+                                        modifier = Modifier.size(36.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Song list
+                if (songs.isEmpty()) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 40.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("No songs in this collection", color = SpotifyTextSecondary)
+                        }
+                    }
+                } else {
+                    items(songs, key = { it.id }) { song ->
+                        TrackListItem(
+                            song = song,
+                            isPlaying = song.id == uiState.currentSongId && uiState.isPlaying,
+                            onClick = { onIntent(HomeIntent.PlaySong(song, songs)) },
+                            onFavoriteToggle = { onIntent(HomeIntent.ToggleFavorite(song)) }
+                        )
+                    }
+                }
+            }
+        }
     }
 }

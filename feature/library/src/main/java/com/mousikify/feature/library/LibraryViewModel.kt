@@ -56,6 +56,7 @@ data class LibraryUiState(
     val statusMessage: String? = null,
     val currentSongId: Long? = null,
     val isPlaying: Boolean = false,
+    val isShuffleEnabled: Boolean = false,
     val activeDetail: LibraryDetailView? = null,
     val songToAddToPlaylist: Song? = null,
     val showAddToPlaylistForSelection: Boolean = false,
@@ -66,7 +67,7 @@ sealed interface LibraryIntent {
     data class SetFilter(val filter: LibraryFilter) : LibraryIntent
     data class PlaySong(val song: Song, val queue: List<Song>) : LibraryIntent
     data class PlayAll(val songs: List<Song>, val startIndex: Int = 0) : LibraryIntent
-    data class ShufflePlay(val songs: List<Song>) : LibraryIntent
+    data class ToggleShuffle(val songs: List<Song>? = null) : LibraryIntent
     data class ToggleSelectSong(val songId: Long) : LibraryIntent
     data object ClearSelection : LibraryIntent
     data object SelectAll : LibraryIntent
@@ -120,8 +121,12 @@ class LibraryViewModel @Inject constructor(
         Triple(scanning, msg, detail)
     }
 
-    private val playbackState = combine(musicController.currentSong, musicController.isPlaying) { song, isPlaying ->
-        Pair(song, isPlaying)
+    private val playbackState = combine(
+        musicController.currentSong,
+        musicController.isPlaying,
+        musicController.isShuffleEnabled
+    ) { song, isPlaying, shuffle ->
+        Triple(song, isPlaying, shuffle)
     }
 
     private val mediaCollections = combine(
@@ -161,7 +166,7 @@ class LibraryViewModel @Inject constructor(
         scanAndDetailState,
         playbackState,
         playlistDialogsState
-    ) { content, (isScanning, statusMessage, activeDetail), (currentSong, isPlaying), (songToAdd, showSelection, pickerPlaylist) ->
+    ) { content, (isScanning, statusMessage, activeDetail), (currentSong, isPlaying, shuffle), (songToAdd, showSelection, pickerPlaylist) ->
         LibraryUiState(
             activeFilter = content.filter,
             songs = content.songs,
@@ -176,6 +181,7 @@ class LibraryViewModel @Inject constructor(
             statusMessage = statusMessage,
             currentSongId = currentSong?.id,
             isPlaying = isPlaying,
+            isShuffleEnabled = shuffle,
             activeDetail = activeDetail,
             songToAddToPlaylist = songToAdd,
             showAddToPlaylistForSelection = showSelection,
@@ -196,9 +202,8 @@ class LibraryViewModel @Inject constructor(
             is LibraryIntent.PlayAll -> {
                 musicController.playQueue(intent.songs, intent.startIndex.coerceAtLeast(0))
             }
-            is LibraryIntent.ShufflePlay -> {
-                val shuffled = intent.songs.shuffled()
-                musicController.playQueue(shuffled, 0)
+            is LibraryIntent.ToggleShuffle -> {
+                handleToggleShuffle(intent.songs)
             }
             is LibraryIntent.ToggleSelectSong -> {
                 val current = _selectedSongIds.value.toMutableSet()
@@ -350,6 +355,26 @@ class LibraryViewModel @Inject constructor(
             is LibraryIntent.CloseDetail -> {
                 detailJob?.cancel()
                 _activeDetail.value = null
+            }
+        }
+    }
+
+    private fun handleToggleShuffle(songs: List<Song>?) {
+        if (musicController.isShuffleEnabled.value) {
+            musicController.toggleShuffle()
+        } else {
+            if (!songs.isNullOrEmpty()) {
+                val currentQueueIds = musicController.currentQueue.value.map { it.id }
+                val targetIds = songs.map { it.id }
+                if (currentQueueIds.isNotEmpty() && currentQueueIds == targetIds) {
+                    musicController.toggleShuffle()
+                } else {
+                    musicController.setShuffleEnabled(true)
+                    val startIndex = songs.indices.random()
+                    musicController.playQueue(songs, startIndex)
+                }
+            } else {
+                musicController.toggleShuffle()
             }
         }
     }

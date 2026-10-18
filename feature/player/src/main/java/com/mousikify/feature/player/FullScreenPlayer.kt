@@ -353,43 +353,6 @@ fun FullScreenPlayer(
             }
         }
 
-        // Spotify Bottom Actions Row: Devices, Share, Queue
-        item {
-            Spacer(modifier = Modifier.height(18.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = {}) {
-                    Icon(
-                        imageVector = Icons.Default.Devices,
-                        contentDescription = "Connect to device",
-                        tint = SpotifyTextSecondary,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-
-                IconButton(onClick = {}) {
-                    Icon(
-                        imageVector = Icons.Default.Share,
-                        contentDescription = "Share",
-                        tint = SpotifyTextSecondary,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-
-                IconButton(onClick = {}) {
-                    Icon(
-                        imageVector = Icons.Default.QueueMusic,
-                        contentDescription = "Queue",
-                        tint = SpotifyTextSecondary,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-            }
-        }
-
         // Synced Lyrics Card (Spotify Signature Design)
         if (uiState.lyrics.isNotEmpty()) {
             item {

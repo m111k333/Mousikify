@@ -92,7 +92,10 @@ class QueueManager @Inject constructor(
         if (_isShuffleEnabled.value) {
             val shuffled = songs.toMutableList()
             // Keep targetSong at the first position in shuffled queue
-            shuffled.remove(targetSong)
+            val targetIdx = shuffled.indexOfFirst { it.id == targetSong.id }
+            if (targetIdx >= 0) {
+                shuffled.removeAt(targetIdx)
+            }
             fisherYatesShuffle(shuffled)
             shuffled.add(0, targetSong)
             _currentQueue.value = shuffled
@@ -180,6 +183,11 @@ class QueueManager @Inject constructor(
         }
     }
 
+    fun setShuffleEnabled(enabled: Boolean) {
+        if (_isShuffleEnabled.value == enabled) return
+        toggleShuffle()
+    }
+
     fun toggleShuffle(): Boolean {
         val newShuffle = !_isShuffleEnabled.value
         _isShuffleEnabled.value = newShuffle
@@ -188,7 +196,10 @@ class QueueManager @Inject constructor(
         if (newShuffle) {
             val list = _originalQueue.toMutableList()
             if (current != null) {
-                list.remove(current)
+                val idx = list.indexOfFirst { it.id == current.id }
+                if (idx >= 0) {
+                    list.removeAt(idx)
+                }
                 fisherYatesShuffle(list)
                 list.add(0, current)
                 _currentIndex.value = 0
