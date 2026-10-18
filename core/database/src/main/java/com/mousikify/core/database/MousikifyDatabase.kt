@@ -21,7 +21,7 @@ import com.mousikify.core.database.entity.SongFtsEntity
         PlaylistSongCrossRef::class,
         EqPresetEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 @TypeConverters(Converters::class)

@@ -18,5 +18,6 @@ data class Song(
     val lastPlayedAt: Long? = null,
     val isFavorite: Boolean = false,
     val lrcPath: String? = null,
-    val replayGainDb: Float? = null
+    val replayGainDb: Float? = null,
+    val artworkUri: String? = null
 )

@@ -43,7 +43,8 @@ class SongRepository @Inject constructor(
                 artistId = first.artistId,
                 songCount = albumSongs.size,
                 year = albumSongs.maxOfOrNull { it.year } ?: 0,
-                artworkUri = "content://media/external/audio/albumart/$albumId"
+                artworkUri = albumSongs.firstOrNull { !it.artworkUri.isNullOrBlank() }?.artworkUri
+                    ?: "content://media/external/audio/albumart/$albumId"
             )
         }.sortedBy { it.title.lowercase() }
     }
@@ -106,6 +107,10 @@ class SongRepository @Inject constructor(
 
     suspend fun recordPlay(songId: Long) {
         songDao.recordPlay(songId, System.currentTimeMillis())
+    }
+
+    suspend fun updateArtworkUri(songId: Long, artworkUri: String) {
+        songDao.updateArtworkUri(songId, artworkUri)
     }
 
     suspend fun upsertSongs(songs: List<Song>) {

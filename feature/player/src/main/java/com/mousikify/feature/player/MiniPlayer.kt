@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
@@ -75,10 +76,18 @@ fun MiniPlayer(
                 modifier = Modifier
                     .size(42.dp)
                     .clip(RoundedCornerShape(4.dp))
-                    .background(SpotifyCardBackground)
+                    .background(SpotifyCardBackground),
+                contentAlignment = Alignment.Center
             ) {
+                Icon(
+                    imageVector = Icons.Default.MusicNote,
+                    contentDescription = null,
+                    tint = SpotifyTextSecondary.copy(alpha = 0.35f),
+                    modifier = Modifier.size(22.dp)
+                )
+                val artworkModel = song.artworkUri ?: "content://media/external/audio/albumart/${song.albumId}"
                 AsyncImage(
-                    model = "content://media/external/audio/albumart/${song.albumId}",
+                    model = artworkModel,
                     contentDescription = song.title,
                     modifier = Modifier.matchParentSize(),
                     contentScale = ContentScale.Crop

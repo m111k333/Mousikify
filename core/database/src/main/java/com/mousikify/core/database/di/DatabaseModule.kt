@@ -3,6 +3,7 @@ package com.mousikify.core.database.di
 import android.content.Context
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.mousikify.core.database.MousikifyDatabase
 import com.mousikify.core.database.dao.EqPresetDao
@@ -23,6 +24,12 @@ import javax.inject.Singleton
 @InstallIn(SingletonComponent::class)
 object DatabaseModule {
 
+    private val MIGRATION_1_2 = object : Migration(1, 2) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE songs ADD COLUMN artwork_uri TEXT DEFAULT NULL")
+        }
+    }
+
     @Provides
     @Singleton
     fun provideMousikifyDatabase(
@@ -33,7 +40,10 @@ object DatabaseModule {
             context,
             MousikifyDatabase::class.java,
             MousikifyDatabase.DATABASE_NAME
-        ).addCallback(object : RoomDatabase.Callback() {
+        )
+        .addMigrations(MIGRATION_1_2)
+        .fallbackToDestructiveMigration()
+        .addCallback(object : RoomDatabase.Callback() {
             override fun onCreate(db: SupportSQLiteDatabase) {
                 super.onCreate(db)
                 // Pre-populate standard 10-band presets

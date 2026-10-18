@@ -14,6 +14,15 @@ data class MediaIdDate(
     val dateModified: Long
 )
 
+data class SongDedupRecord(
+    val id: Long,
+    val contentUri: String,
+    val title: String,
+    val artistName: String,
+    val durationMs: Long,
+    val folderPath: String
+)
+
 @Dao
 interface SongDao {
 
@@ -76,4 +85,13 @@ interface SongDao {
 
     @Query("SELECT COUNT(*) FROM songs")
     fun getSongCount(): Flow<Int>
+
+    @Query("SELECT id, content_uri AS contentUri, title, artist_name AS artistName, durationMs, folder_path AS folderPath FROM songs")
+    suspend fun getAllDedupRecords(): List<SongDedupRecord>
+
+    @Query("UPDATE songs SET artwork_uri = :artworkUri WHERE id = :songId")
+    suspend fun updateArtworkUri(songId: Long, artworkUri: String)
+
+    @Query("SELECT * FROM songs WHERE artwork_uri IS NULL OR artwork_uri = ''")
+    suspend fun getSongsWithoutArtwork(): List<SongEntity>
 }

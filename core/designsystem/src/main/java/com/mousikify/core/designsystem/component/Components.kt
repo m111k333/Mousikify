@@ -88,7 +88,13 @@ fun TrackListItem(
                 .background(SpotifyCardBackground),
             contentAlignment = Alignment.Center
         ) {
-            val albumArtUri = "content://media/external/audio/albumart/${song.albumId}"
+            Icon(
+                imageVector = Icons.Default.MusicNote,
+                contentDescription = null,
+                tint = SpotifyTextSecondary.copy(alpha = 0.35f),
+                modifier = Modifier.size(24.dp)
+            )
+            val albumArtUri = song.artworkUri ?: "content://media/external/audio/albumart/${song.albumId}"
             AsyncImage(
                 model = albumArtUri,
                 contentDescription = song.albumName,

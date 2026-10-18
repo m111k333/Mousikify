@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -526,10 +527,18 @@ private fun SpotifySquareTrackCard(
             modifier = Modifier
                 .size(140.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .background(SpotifyCardBackground)
+                .background(SpotifyCardBackground),
+            contentAlignment = Alignment.Center
         ) {
+            Icon(
+                imageVector = Icons.Default.MusicNote,
+                contentDescription = null,
+                tint = SpotifyTextSecondary.copy(alpha = 0.35f),
+                modifier = Modifier.size(36.dp)
+            )
+            val artworkModel = song.artworkUri ?: "content://media/external/audio/albumart/${song.albumId}"
             AsyncImage(
-                model = "content://media/external/audio/albumart/${song.albumId}",
+                model = artworkModel,
                 contentDescription = song.title,
                 modifier = Modifier.matchParentSize(),
                 contentScale = ContentScale.Crop

@@ -34,7 +34,8 @@ data class SongEntity(
     @ColumnInfo(name = "last_played_at") val lastPlayedAt: Long? = null,
     @ColumnInfo(name = "is_favorite") val isFavorite: Boolean = false,
     @ColumnInfo(name = "lrc_path") val lrcPath: String? = null,
-    @ColumnInfo(name = "replay_gain_db") val replayGainDb: Float? = null
+    @ColumnInfo(name = "replay_gain_db") val replayGainDb: Float? = null,
+    @ColumnInfo(name = "artwork_uri") val artworkUri: String? = null
 ) {
     fun toDomain(): Song = Song(
         id = id,
@@ -54,7 +55,8 @@ data class SongEntity(
         lastPlayedAt = lastPlayedAt,
         isFavorite = isFavorite,
         lrcPath = lrcPath,
-        replayGainDb = replayGainDb
+        replayGainDb = replayGainDb,
+        artworkUri = artworkUri
     )
 }
 
@@ -76,7 +78,8 @@ fun Song.toEntity(): SongEntity = SongEntity(
     lastPlayedAt = lastPlayedAt,
     isFavorite = isFavorite,
     lrcPath = lrcPath,
-    replayGainDb = replayGainDb
+    replayGainDb = replayGainDb,
+    artworkUri = artworkUri
 )
 
 // Virtual FTS4 table for sub-10ms instant fuzzy search across Title, Artist, and Album

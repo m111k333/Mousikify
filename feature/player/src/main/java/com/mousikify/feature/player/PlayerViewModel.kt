@@ -7,6 +7,7 @@ import android.net.Uri
 import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.mousikify.core.database.repository.SongRepository
 import com.mousikify.core.designsystem.palette.PaletteExtractor
 import com.mousikify.core.designsystem.theme.SpotifyBlack
 import com.mousikify.core.media.controller.MusicController
@@ -53,7 +54,8 @@ sealed interface PlayerIntent {
 @HiltViewModel
 class PlayerViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val musicController: MusicController
+    private val musicController: MusicController,
+    private val songRepository: SongRepository
 ) : ViewModel() {
 
     private val _lyrics = MutableStateFlow<List<LyricLine>>(emptyList())
@@ -130,6 +132,19 @@ class PlayerViewModel @Inject constructor(
                     val bitmap = BitmapFactory.decodeByteArray(pictureBytes, 0, pictureBytes.size)
                     val color = PaletteExtractor.extractGradientSeedColor(bitmap)
                     _gradientColor.value = color
+
+                    // If song does not have artworkUri cached, save it and update database
+                    if (song.artworkUri.isNullOrBlank()) {
+                        try {
+                            val artDir = File(context.filesDir, "album_art")
+                            if (!artDir.exists()) artDir.mkdirs()
+                            val artFile = File(artDir, "song_${song.id}.jpg")
+                            if (!artFile.exists() || artFile.length() == 0L) {
+                                artFile.writeBytes(pictureBytes)
+                            }
+                            songRepository.updateArtworkUri(song.id, artFile.absolutePath)
+                        } catch (_: Exception) {}
+                    }
                 } else {
                     _gradientColor.value = SpotifyBlack
                 }

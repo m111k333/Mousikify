@@ -20,6 +20,9 @@ interface PlaylistDao {
     @Query("SELECT * FROM playlists WHERE playlistId = :id")
     fun getPlaylistById(id: Long): Flow<PlaylistEntity?>
 
+    @Query("SELECT * FROM playlists WHERE LOWER(name) = LOWER(:name) LIMIT 1")
+    suspend fun getPlaylistByName(name: String): PlaylistEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPlaylist(playlist: PlaylistEntity): Long
 
@@ -42,6 +45,9 @@ interface PlaylistDao {
 
     @Query("SELECT COUNT(*) FROM playlist_songs WHERE playlistId = :playlistId")
     suspend fun getSongCountInPlaylist(playlistId: Long): Int
+
+    @Query("SELECT COUNT(*) FROM playlist_songs WHERE playlistId = :playlistId AND songId = :songId")
+    suspend fun isSongInPlaylist(playlistId: Long, songId: Long): Int
 
     @Query("DELETE FROM playlist_songs WHERE playlistId = :playlistId AND songId = :songId")
     suspend fun removeSongFromPlaylist(playlistId: Long, songId: Long)

@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
@@ -251,8 +252,15 @@ fun SearchScreen(
                                 modifier = Modifier
                                     .size(48.dp)
                                     .clip(RoundedCornerShape(4.dp))
-                                    .background(SpotifyCardBackground)
+                                    .background(SpotifyCardBackground),
+                                contentAlignment = Alignment.Center
                             ) {
+                                Icon(
+                                    imageVector = Icons.Default.Album,
+                                    contentDescription = null,
+                                    tint = SpotifyTextSecondary.copy(alpha = 0.35f),
+                                    modifier = Modifier.size(24.dp)
+                                )
                                 AsyncImage(
                                     model = album.artworkUri,
                                     contentDescription = album.title,

@@ -7,8 +7,11 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import com.mousikify.core.database.dao.SongDao
+import com.mousikify.core.database.dao.SongDedupRecord
 import com.mousikify.core.database.entity.SongEntity
 import com.mousikify.core.database.preferences.PlaybackPreferences
+import com.mousikify.core.scanner.artwork.ArtworkExtractor
+import com.mousikify.core.scanner.dedup.SongDeduplicator
 import com.mousikify.core.scanner.tag.TagExtractor
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -28,6 +31,7 @@ class MediaStoreScanner @Inject constructor(
 
     suspend fun scanMediaStore(): ScanResult = withContext(Dispatchers.IO) {
         val cachedMap = songDao.getAllMediaIdsAndModifiedDates().associate { it.id to it.dateModified }
+        val existingRecords = songDao.getAllDedupRecords().toMutableList()
 
         val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
@@ -92,14 +96,14 @@ class MediaStoreScanner @Inject constructor(
                         val fileName = if (!filePath.isNullOrBlank()) File(filePath).nameWithoutExtension else "Track $id"
                         val title = if (rawTitle.isNullOrBlank() || rawTitle.equals("Unknown Title", ignoreCase = true) || rawTitle.equals("<unknown>", ignoreCase = true)) {
                             fileName
-                        } else rawTitle
+                        } else rawTitle.trim()
 
                         val rawArtist = cursor.getString(artistColumn)
-                        val artist = if (rawArtist.isNullOrBlank() || rawArtist.equals("<unknown>", ignoreCase = true)) "Unknown Artist" else rawArtist
+                        val artist = if (rawArtist.isNullOrBlank() || rawArtist.equals("<unknown>", ignoreCase = true)) "Unknown Artist" else rawArtist.trim()
                         val artistId = cursor.getLong(artistIdColumn)
 
                         val rawAlbum = cursor.getString(albumColumn)
-                        val album = if (rawAlbum.isNullOrBlank() || rawAlbum.equals("<unknown>", ignoreCase = true)) "Unknown Album" else rawAlbum
+                        val album = if (rawAlbum.isNullOrBlank() || rawAlbum.equals("<unknown>", ignoreCase = true)) "Unknown Album" else rawAlbum.trim()
                         val albumId = cursor.getLong(albumIdColumn)
 
                         var duration = cursor.getLong(durationColumn)
@@ -128,25 +132,61 @@ class MediaStoreScanner @Inject constructor(
                             }
                         }
 
+                        // Check deduplication
+                        val duplicate = SongDeduplicator.findDuplicate(
+                            candidateUri = contentUri,
+                            candidateTitle = title,
+                            candidateArtist = artist,
+                            candidateDurationMs = duration,
+                            candidateFilePath = filePath,
+                            existingRecords = existingRecords.filter { it.id != id }
+                        )
+
+                        if (duplicate != null) {
+                            // Already exists with a different ID (e.g. from SAF scan or previous index) -> skip
+                            continue
+                        }
+
                         val extended = TagExtractor.extract(context, filePath, Uri.parse(contentUri))
 
-                        songsToUpsert.add(
-                            SongEntity(
+                        // Extract embedded or sidecar artwork
+                        val artworkUri = ArtworkExtractor.extractArtwork(
+                            context = context,
+                            songId = id,
+                            albumId = albumId,
+                            contentUri = Uri.parse(contentUri),
+                            filePath = filePath
+                        )
+
+                        val entity = SongEntity(
+                            id = id,
+                            contentUri = contentUri,
+                            title = title,
+                            artistId = artistId,
+                            artistName = artist,
+                            albumId = albumId,
+                            albumName = album,
+                            durationMs = duration,
+                            trackNumber = track,
+                            year = year,
+                            folderPath = folderPath,
+                            dateAdded = dateAdded,
+                            dateModified = dateModified,
+                            lrcPath = extended.lrcPath,
+                            replayGainDb = extended.replayGainDb,
+                            artworkUri = artworkUri
+                        )
+
+                        songsToUpsert.add(entity)
+
+                        existingRecords.add(
+                            SongDedupRecord(
                                 id = id,
                                 contentUri = contentUri,
                                 title = title,
-                                artistId = artistId,
                                 artistName = artist,
-                                albumId = albumId,
-                                albumName = album,
                                 durationMs = duration,
-                                trackNumber = track,
-                                year = year,
-                                folderPath = folderPath,
-                                dateAdded = dateAdded,
-                                dateModified = dateModified,
-                                lrcPath = extended.lrcPath,
-                                replayGainDb = extended.replayGainDb
+                                folderPath = folderPath
                             )
                         )
                     }
@@ -155,6 +195,23 @@ class MediaStoreScanner @Inject constructor(
         } catch (e: Exception) {
             e.printStackTrace()
         }
+
+        // Retroactively extract artwork for any songs missing artwork
+        try {
+            val songsWithoutArt = songDao.getSongsWithoutArtwork()
+            for (song in songsWithoutArt) {
+                val art = ArtworkExtractor.extractArtwork(
+                    context = context,
+                    songId = song.id,
+                    albumId = song.albumId,
+                    contentUri = Uri.parse(song.contentUri),
+                    filePath = null
+                )
+                if (!art.isNullOrBlank()) {
+                    songDao.updateArtworkUri(song.id, art)
+                }
+            }
+        } catch (_: Exception) {}
 
         // Identify deleted tracks (excluding SAF tracks which have 0x4000000000000000L flag)
         val staleIds = cachedMap.keys.filter { id ->

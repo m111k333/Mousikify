@@ -139,11 +139,13 @@ class HomeViewModel @Inject constructor(
                             Intent.FLAG_GRANT_READ_URI_PERMISSION
                         )
                         preferences.addCustomFolderUri(intent.uri.toString())
-                        val count = safFolderScanner.scanFolder(intent.uri)
-                        _statusMessage.value = if (count > 0) {
-                            "Imported $count songs from folder!"
+                        val result = safFolderScanner.scanFolder(intent.uri)
+                        _statusMessage.value = if (result.newCount > 0) {
+                            "Imported ${result.newCount} songs into playlist '${result.folderName}' (${result.totalCount} tracks total)!"
+                        } else if (result.totalCount > 0) {
+                            "Playlist '${result.folderName}' created with ${result.totalCount} tracks."
                         } else {
-                            "No new audio files found in selected folder."
+                            "No audio files found in selected folder."
                         }
                     } catch (e: Exception) {
                         _statusMessage.value = "Import error: ${e.localizedMessage}"

@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
@@ -178,12 +179,26 @@ fun FullScreenPlayer(
                 shape = RoundedCornerShape(8.dp),
                 elevation = CardDefaults.cardElevation(defaultElevation = 10.dp)
             ) {
-                AsyncImage(
-                    model = "content://media/external/audio/albumart/${song.albumId}",
-                    contentDescription = song.title,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(SpotifyCardBackground),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.MusicNote,
+                        contentDescription = null,
+                        tint = SpotifyTextSecondary.copy(alpha = 0.35f),
+                        modifier = Modifier.size(80.dp)
+                    )
+                    val artworkModel = song.artworkUri ?: "content://media/external/audio/albumart/${song.albumId}"
+                    AsyncImage(
+                        model = artworkModel,
+                        contentDescription = song.title,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                }
             }
         }
 
