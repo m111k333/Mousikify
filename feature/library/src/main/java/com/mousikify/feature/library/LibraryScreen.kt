@@ -1,14 +1,15 @@
 package com.mousikify.feature.library
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,26 +29,35 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Snackbar
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -65,9 +75,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil3.compose.AsyncImage
-import com.mousikify.core.designsystem.component.TrackListItem
 import com.mousikify.core.designsystem.theme.SpotifyBackground
 import com.mousikify.core.designsystem.theme.SpotifyCardBackground
 import com.mousikify.core.designsystem.theme.SpotifyGreen
@@ -85,9 +95,19 @@ fun LibraryRoute(
     viewModel: LibraryViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+
+    val folderPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            viewModel.onIntent(LibraryIntent.ImportFolder(uri))
+        }
+    }
+
     LibraryScreen(
         uiState = uiState,
-        onIntent = viewModel::onIntent
+        onIntent = viewModel::onIntent,
+        onPickFolder = { folderPicker.launch(null) }
     )
 }
 
@@ -95,75 +115,146 @@ fun LibraryRoute(
 fun LibraryScreen(
     uiState: LibraryUiState,
     onIntent: (LibraryIntent) -> Unit,
+    onPickFolder: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var showPlusMenu by remember { mutableStateOf(false) }
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(SpotifyBackground)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Header
+            // Spotify Header: "Your Library" with Search, Plus, & Rescan
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 16.dp, top = 24.dp, end = 16.dp, bottom = 8.dp),
+                    .padding(start = 16.dp, top = 24.dp, end = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = "Your Library",
                     style = MaterialTheme.typography.headlineLarge,
+                    fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f)
                 )
-                IconButton(onClick = { onIntent(LibraryIntent.ShowCreatePlaylist(true)) }) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Create Playlist",
-                        tint = SpotifyTextPrimary
-                    )
+
+                IconButton(onClick = { onIntent(LibraryIntent.RescanLibrary) }) {
+                    if (uiState.isScanning) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = SpotifyGreen,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Rescan library",
+                            tint = SpotifyTextPrimary
+                        )
+                    }
+                }
+
+                Box {
+                    IconButton(onClick = { showPlusMenu = true }) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Add",
+                            tint = SpotifyTextPrimary,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+
+                    DropdownMenu(
+                        expanded = showPlusMenu,
+                        onDismissRequest = { showPlusMenu = false },
+                        containerColor = SpotifyCardBackground
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Select music folder from device", color = SpotifyTextPrimary) },
+                            leadingIcon = { Icon(Icons.Default.FolderOpen, contentDescription = null, tint = SpotifyGreen) },
+                            onClick = {
+                                showPlusMenu = false
+                                onPickFolder()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Create new playlist", color = SpotifyTextPrimary) },
+                            leadingIcon = { Icon(Icons.Default.PlaylistAdd, contentDescription = null, tint = SpotifyTextPrimary) },
+                            onClick = {
+                                showPlusMenu = false
+                                onIntent(LibraryIntent.ShowCreatePlaylist(true))
+                            }
+                        )
+                    }
                 }
             }
 
-            // Animated Filter Chips
+            // Spotify Filter Pills
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(bottom = 8.dp)
+                modifier = Modifier.padding(bottom = 12.dp)
             ) {
                 item {
-                    FilterChipItem(
+                    SpotifyFilterPill(
                         selected = uiState.activeFilter == LibraryFilter.ALL_SONGS,
-                        label = "Tracks",
+                        label = "Songs (${uiState.songs.size})",
                         onClick = { onIntent(LibraryIntent.SetFilter(LibraryFilter.ALL_SONGS)) }
                     )
                 }
                 item {
-                    FilterChipItem(
+                    SpotifyFilterPill(
                         selected = uiState.activeFilter == LibraryFilter.PLAYLISTS,
                         label = "Playlists",
                         onClick = { onIntent(LibraryIntent.SetFilter(LibraryFilter.PLAYLISTS)) }
                     )
                 }
                 item {
-                    FilterChipItem(
-                        selected = uiState.activeFilter == LibraryFilter.ALBUMS,
-                        label = "Albums",
-                        onClick = { onIntent(LibraryFilter.ALBUMS.let { LibraryIntent.SetFilter(it) }) }
+                    SpotifyFilterPill(
+                        selected = uiState.activeFilter == LibraryFilter.FOLDERS,
+                        label = "Folders (${uiState.folders.size})",
+                        onClick = { onIntent(LibraryIntent.SetFilter(LibraryFilter.FOLDERS)) }
                     )
                 }
                 item {
-                    FilterChipItem(
+                    SpotifyFilterPill(
                         selected = uiState.activeFilter == LibraryFilter.ARTISTS,
                         label = "Artists",
                         onClick = { onIntent(LibraryIntent.SetFilter(LibraryFilter.ARTISTS)) }
                     )
                 }
                 item {
-                    FilterChipItem(
-                        selected = uiState.activeFilter == LibraryFilter.FOLDERS,
-                        label = "Folders",
-                        onClick = { onIntent(LibraryIntent.SetFilter(LibraryFilter.FOLDERS)) }
+                    SpotifyFilterPill(
+                        selected = uiState.activeFilter == LibraryFilter.ALBUMS,
+                        label = "Albums",
+                        onClick = { onIntent(LibraryIntent.SetFilter(LibraryFilter.ALBUMS)) }
                     )
+                }
+            }
+
+            // Subheader: "⇅ Recents" and "Import Folder" shortcut button
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Sort, contentDescription = null, tint = SpotifyTextSecondary, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Recents", style = MaterialTheme.typography.bodyMedium, color = SpotifyTextSecondary, fontWeight = FontWeight.SemiBold)
+                }
+
+                TextButton(
+                    onClick = onPickFolder,
+                    colors = ButtonDefaults.textButtonColors(contentColor = SpotifyGreen)
+                ) {
+                    Icon(Icons.Default.CreateNewFolder, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Import Folder", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
             }
 
@@ -201,54 +292,132 @@ fun LibraryScreen(
                 }
             }
 
-            // Filtered Content
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 120.dp)
-            ) {
-                when (uiState.activeFilter) {
-                    LibraryFilter.ALL_SONGS -> {
-                        items(uiState.songs, key = { it.id }) { song ->
-                            SelectableTrackItem(
-                                song = song,
-                                isPlaying = song.id == uiState.currentSongId && uiState.isPlaying,
-                                isSelected = uiState.selectedSongIds.contains(song.id),
-                                isMultiSelectMode = uiState.isMultiSelectMode,
-                                onClick = {
-                                    if (uiState.isMultiSelectMode) {
-                                        onIntent(LibraryIntent.ToggleSelectSong(song.id))
-                                    } else {
-                                        onIntent(LibraryIntent.PlaySong(song, uiState.songs))
-                                    }
-                                },
-                                onLongClick = {
-                                    onIntent(LibraryIntent.ToggleSelectSong(song.id))
-                                },
-                                onFavoriteToggle = { onIntent(LibraryIntent.ToggleFavorite(song)) }
+            // Empty Library State
+            if (uiState.songs.isEmpty() && !uiState.isScanning) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(72.dp)
+                                .clip(CircleShape)
+                                .background(SpotifyCardBackground),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.FolderOpen,
+                                contentDescription = null,
+                                tint = SpotifyGreen,
+                                modifier = Modifier.size(36.dp)
                             )
                         }
-                    }
-                    LibraryFilter.PLAYLISTS -> {
-                        items(uiState.playlists, key = { it.id }) { playlist ->
-                            PlaylistItemRow(playlist = playlist, onClick = {})
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "No music in your library yet",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = SpotifyTextPrimary
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Import songs directly from your device folders (Downloads, Music, SD Card) or rescan device storage.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = SpotifyTextSecondary,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(24.dp))
+                        Button(
+                            onClick = onPickFolder,
+                            colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
+                            shape = RoundedCornerShape(50)
+                        ) {
+                            Icon(Icons.Default.CreateNewFolder, contentDescription = null, tint = Color.Black)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Select Music Folder", color = Color.Black, fontWeight = FontWeight.Bold)
                         }
-                    }
-                    LibraryFilter.ALBUMS -> {
-                        items(uiState.albums, key = { it.id }) { album ->
-                            AlbumItemRow(album = album, onClick = {})
-                        }
-                    }
-                    LibraryFilter.ARTISTS -> {
-                        items(uiState.artists, key = { it.id }) { artist ->
-                            ArtistItemRow(artist = artist, onClick = {})
-                        }
-                    }
-                    LibraryFilter.FOLDERS -> {
-                        items(uiState.folders, key = { it.path }) { folder ->
-                            FolderItemRow(folder = folder, onClick = {})
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedButton(
+                            onClick = { onIntent(LibraryIntent.RescanLibrary) },
+                            shape = RoundedCornerShape(50)
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, tint = SpotifyTextPrimary)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Rescan Storage", color = SpotifyTextPrimary)
                         }
                     }
                 }
+            } else {
+                // Content List
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(bottom = 140.dp)
+                ) {
+                    when (uiState.activeFilter) {
+                        LibraryFilter.ALL_SONGS -> {
+                            items(uiState.songs, key = { it.id }) { song ->
+                                SpotifyTrackRow(
+                                    song = song,
+                                    isPlaying = song.id == uiState.currentSongId && uiState.isPlaying,
+                                    isSelected = uiState.selectedSongIds.contains(song.id),
+                                    isMultiSelectMode = uiState.isMultiSelectMode,
+                                    onClick = {
+                                        if (uiState.isMultiSelectMode) {
+                                            onIntent(LibraryIntent.ToggleSelectSong(song.id))
+                                        } else {
+                                            onIntent(LibraryIntent.PlaySong(song, uiState.songs))
+                                        }
+                                    },
+                                    onFavoriteToggle = { onIntent(LibraryIntent.ToggleFavorite(song)) }
+                                )
+                            }
+                        }
+                        LibraryFilter.PLAYLISTS -> {
+                            items(uiState.playlists, key = { it.id }) { playlist ->
+                                SpotifyPlaylistItem(playlist = playlist, onClick = {})
+                            }
+                        }
+                        LibraryFilter.FOLDERS -> {
+                            items(uiState.folders, key = { it.path }) { folder ->
+                                SpotifyFolderItem(folder = folder, onClick = {})
+                            }
+                        }
+                        LibraryFilter.ARTISTS -> {
+                            items(uiState.artists, key = { it.id }) { artist ->
+                                SpotifyArtistItem(artist = artist, onClick = {})
+                            }
+                        }
+                        LibraryFilter.ALBUMS -> {
+                            items(uiState.albums, key = { it.id }) { album ->
+                                SpotifyAlbumItem(album = album, onClick = {})
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Notification Snackbar
+        if (uiState.statusMessage != null) {
+            Snackbar(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(16.dp),
+                containerColor = SpotifySurfaceElevated,
+                contentColor = SpotifyTextPrimary,
+                action = {
+                    TextButton(onClick = { onIntent(LibraryIntent.DismissStatusMessage) }) {
+                        Text("OK", color = SpotifyGreen)
+                    }
+                }
+            ) {
+                Text(uiState.statusMessage)
             }
         }
 
@@ -263,68 +432,110 @@ fun LibraryScreen(
 }
 
 @Composable
-private fun FilterChipItem(
+private fun SpotifyFilterPill(
     selected: Boolean,
     label: String,
     onClick: () -> Unit
 ) {
-    FilterChip(
-        selected = selected,
-        onClick = onClick,
-        label = { Text(label) },
-        colors = FilterChipDefaults.filterChipColors(
-            selectedContainerColor = SpotifyGreen,
-            selectedLabelColor = Color.Black,
-            containerColor = SpotifyCardBackground,
-            labelColor = SpotifyTextPrimary
-        ),
-        shape = RoundedCornerShape(20.dp)
-    )
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(if (selected) SpotifyGreen else SpotifyCardBackground)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 7.dp)
+    ) {
+        Text(
+            text = label,
+            color = if (selected) Color.Black else SpotifyTextPrimary,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun SelectableTrackItem(
+private fun SpotifyTrackRow(
     song: Song,
     isPlaying: Boolean,
     isSelected: Boolean,
     isMultiSelectMode: Boolean,
     onClick: () -> Unit,
-    onLongClick: () -> Unit,
     onFavoriteToggle: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onLongClick
-            ),
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (isMultiSelectMode) {
             Checkbox(
                 checked = isSelected,
                 onCheckedChange = { onClick() },
-                colors = CheckboxDefaults.colors(
-                    checkedColor = SpotifyGreen,
-                    checkmarkColor = Color.Black
-                ),
-                modifier = Modifier.padding(start = 12.dp)
+                colors = CheckboxDefaults.colors(checkedColor = SpotifyGreen, checkmarkColor = Color.Black),
+                modifier = Modifier.padding(end = 8.dp)
             )
         }
-        TrackListItem(
-            song = song,
-            isPlaying = isPlaying,
-            onClick = onClick,
-            onFavoriteToggle = onFavoriteToggle,
-            modifier = Modifier.weight(1f)
-        )
+
+        Box(
+            modifier = Modifier
+                .size(52.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(SpotifyCardBackground),
+            contentAlignment = Alignment.Center
+        ) {
+            AsyncImage(
+                model = "content://media/external/audio/albumart/${song.albumId}",
+                contentDescription = song.title,
+                modifier = Modifier.matchParentSize(),
+                contentScale = ContentScale.Crop
+            )
+        }
+
+        Spacer(modifier = Modifier.width(12.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = song.title,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = if (isPlaying) SpotifyGreen else SpotifyTextPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Downloaded green indicator (Spotify style)
+                Icon(
+                    imageVector = Icons.Default.CheckCircle,
+                    contentDescription = "Downloaded offline",
+                    tint = SpotifyGreen,
+                    modifier = Modifier.size(12.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = song.artistName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SpotifyTextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
+        IconButton(onClick = onFavoriteToggle) {
+            Icon(
+                imageVector = if (song.isFavorite) Icons.Default.CheckCircle else Icons.Default.MoreVert,
+                contentDescription = null,
+                tint = if (song.isFavorite) SpotifyGreen else SpotifyTextSecondary,
+                modifier = Modifier.size(20.dp)
+            )
+        }
     }
 }
 
 @Composable
-private fun PlaylistItemRow(
+private fun SpotifyPlaylistItem(
     playlist: Playlist,
     onClick: () -> Unit
 ) {
@@ -337,85 +548,23 @@ private fun PlaylistItemRow(
     ) {
         Box(
             modifier = Modifier
-                .size(56.dp)
+                .size(60.dp)
                 .clip(RoundedCornerShape(4.dp))
                 .background(SpotifyCardBackground),
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Default.QueueMusic, contentDescription = null, tint = SpotifyTextSecondary)
+            Icon(Icons.Default.QueueMusic, contentDescription = null, tint = SpotifyTextSecondary, modifier = Modifier.size(28.dp))
         }
         Spacer(modifier = Modifier.width(14.dp))
         Column {
-            Text(text = playlist.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-            Text(text = "Playlist", style = MaterialTheme.typography.bodyMedium, color = SpotifyTextSecondary)
+            Text(text = playlist.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+            Text(text = "Playlist • Offline", style = MaterialTheme.typography.bodyMedium, color = SpotifyTextSecondary)
         }
     }
 }
 
 @Composable
-private fun AlbumItemRow(
-    album: Album,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier
-                .size(56.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(SpotifyCardBackground)
-        ) {
-            AsyncImage(
-                model = album.artworkUri,
-                contentDescription = album.title,
-                modifier = Modifier.matchParentSize(),
-                contentScale = ContentScale.Crop
-            )
-        }
-        Spacer(modifier = Modifier.width(14.dp))
-        Column {
-            Text(text = album.title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-            Text(text = "${album.artist} • ${album.songCount} songs", style = MaterialTheme.typography.bodyMedium, color = SpotifyTextSecondary)
-        }
-    }
-}
-
-@Composable
-private fun ArtistItemRow(
-    artist: Artist,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier
-                .size(56.dp)
-                .clip(CircleShape)
-                .background(SpotifyCardBackground),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(Icons.Default.Person, contentDescription = null, tint = SpotifyTextSecondary)
-        }
-        Spacer(modifier = Modifier.width(14.dp))
-        Column {
-            Text(text = artist.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-            Text(text = "${artist.songCount} tracks", style = MaterialTheme.typography.bodyMedium, color = SpotifyTextSecondary)
-        }
-    }
-}
-
-@Composable
-private fun FolderItemRow(
+private fun SpotifyFolderItem(
     folder: Folder,
     onClick: () -> Unit
 ) {
@@ -428,17 +577,79 @@ private fun FolderItemRow(
     ) {
         Box(
             modifier = Modifier
-                .size(56.dp)
+                .size(60.dp)
                 .clip(RoundedCornerShape(4.dp))
+                .background(SpotifySurfaceElevated),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Default.Folder, contentDescription = null, tint = SpotifyGreen, modifier = Modifier.size(28.dp))
+        }
+        Spacer(modifier = Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = folder.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text = "${folder.songCount} songs • ${folder.path}", style = MaterialTheme.typography.bodyMedium, color = SpotifyTextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun SpotifyArtistItem(
+    artist: Artist,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(64.dp)
+                .clip(CircleShape)
                 .background(SpotifyCardBackground),
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Default.Folder, contentDescription = null, tint = SpotifyTextSecondary)
+            Icon(Icons.Default.Person, contentDescription = null, tint = SpotifyTextSecondary, modifier = Modifier.size(32.dp))
         }
         Spacer(modifier = Modifier.width(14.dp))
         Column {
-            Text(text = folder.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-            Text(text = "${folder.songCount} tracks • ${folder.path}", style = MaterialTheme.typography.bodyMedium, color = SpotifyTextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text = artist.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+            Text(text = "Artist", style = MaterialTheme.typography.bodyMedium, color = SpotifyTextSecondary)
+        }
+    }
+}
+
+@Composable
+private fun SpotifyAlbumItem(
+    album: Album,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(64.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(SpotifyCardBackground)
+        ) {
+            AsyncImage(
+                model = album.artworkUri,
+                contentDescription = album.title,
+                modifier = Modifier.matchParentSize(),
+                contentScale = ContentScale.Crop
+            )
+        }
+        Spacer(modifier = Modifier.width(14.dp))
+        Column {
+            Text(text = album.title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+            Text(text = "Album • ${album.artist}", style = MaterialTheme.typography.bodyMedium, color = SpotifyTextSecondary)
         }
     }
 }
@@ -449,11 +660,10 @@ private fun CreatePlaylistDialog(
     onCreate: (String) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
-
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = SpotifyCardBackground,
-        title = { Text("Give your playlist a name", color = SpotifyTextPrimary) },
+        title = { Text("Give your playlist a name", color = SpotifyTextPrimary, fontWeight = FontWeight.Bold) },
         text = {
             OutlinedTextField(
                 value = name,
@@ -471,9 +681,10 @@ private fun CreatePlaylistDialog(
         confirmButton = {
             Button(
                 onClick = { if (name.isNotBlank()) onCreate(name) },
-                colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen)
+                colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
+                shape = RoundedCornerShape(50)
             ) {
-                Text("Create", color = Color.Black)
+                Text("Create", color = Color.Black, fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {

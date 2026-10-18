@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Pause
@@ -29,8 +30,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.mousikify.core.designsystem.component.MarqueeText
 import com.mousikify.core.designsystem.theme.SpotifyCardBackground
@@ -55,22 +58,22 @@ fun MiniPlayer(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(64.dp)
+            .height(58.dp)
             .padding(horizontal = 8.dp)
             .clip(RoundedCornerShape(8.dp))
-            .background(SpotifySurfaceElevated)
+            .background(Color(0xFF282828))
             .clickable(onClick = onClick)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 8.dp),
+                .padding(start = 8.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Album art thumbnail
             Box(
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(42.dp)
                     .clip(RoundedCornerShape(4.dp))
                     .background(SpotifyCardBackground)
             ) {
@@ -84,25 +87,37 @@ fun MiniPlayer(
 
             Spacer(modifier = Modifier.width(10.dp))
 
-            // Title and Artist
+            // Title & Artist on one single row with dot separator (Spotify style)
             Column(
                 modifier = Modifier.weight(1f)
             ) {
                 MarqueeText(
                     text = song.title,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = SpotifyTextPrimary
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        color = SpotifyTextPrimary
+                    )
                 )
                 Text(
                     text = song.artistName,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.labelSmall,
                     color = SpotifyTextSecondary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
 
-            // Favorite button
+            // Device icon (Spotify connect style)
+            Icon(
+                imageVector = Icons.Default.Devices,
+                contentDescription = null,
+                tint = SpotifyTextSecondary,
+                modifier = Modifier
+                    .size(20.dp)
+                    .padding(end = 4.dp)
+            )
+
+            // Favorite heart
             IconButton(onClick = onFavoriteClick) {
                 Icon(
                     imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
@@ -123,7 +138,7 @@ fun MiniPlayer(
             }
         }
 
-        // Bottom progress indicator bar
+        // Bottom progress indicator bar (Spotify Green)
         LinearProgressIndicator(
             progress = { progressFraction.coerceIn(0f, 1f) },
             modifier = Modifier
@@ -131,7 +146,7 @@ fun MiniPlayer(
                 .height(2.dp)
                 .align(Alignment.BottomCenter),
             color = SpotifyGreen,
-            trackColor = Color.Transparent
+            trackColor = Color.White.copy(alpha = 0.1f)
         )
     }
 }

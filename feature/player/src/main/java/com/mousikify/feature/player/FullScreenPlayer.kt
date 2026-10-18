@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
@@ -30,8 +31,10 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
@@ -57,7 +60,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -118,12 +120,12 @@ fun FullScreenPlayer(
         contentPadding = PaddingValues(horizontal = 24.dp, vertical = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Top Navigation Bar
+        // Spotify Top Header: Chevron Down + Playlist Context + Equalizer/Menu
         item {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 16.dp, bottom = 24.dp),
+                    .padding(top = 16.dp, bottom = 20.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -132,18 +134,21 @@ fun FullScreenPlayer(
                         imageVector = Icons.Default.KeyboardArrowDown,
                         contentDescription = "Collapse",
                         tint = SpotifyTextPrimary,
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(34.dp)
                     )
                 }
 
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         text = "PLAYING FROM YOUR LIBRARY",
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            letterSpacing = 1.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
                         color = SpotifyTextSecondary
                     )
                     Text(
-                        text = song.albumName,
+                        text = song.albumName.ifBlank { "Local Offline Tracks" },
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Bold,
                         color = SpotifyTextPrimary,
@@ -156,21 +161,22 @@ fun FullScreenPlayer(
                     Icon(
                         imageVector = Icons.Default.Equalizer,
                         contentDescription = "Equalizer",
-                        tint = SpotifyTextPrimary
+                        tint = SpotifyTextPrimary,
+                        modifier = Modifier.size(24.dp)
                     )
                 }
             }
         }
 
-        // Center Album Artwork Card (Spotify 320dp centered card)
+        // Center Album Artwork Card (Large square, rounded corners, subtle elevation)
         item {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(1f)
                     .padding(vertical = 12.dp),
-                shape = RoundedCornerShape(12.dp),
-                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                shape = RoundedCornerShape(8.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 10.dp)
             ) {
                 AsyncImage(
                     model = "content://media/external/audio/albumart/${song.albumId}",
@@ -181,7 +187,7 @@ fun FullScreenPlayer(
             }
         }
 
-        // Title, Artist, & Favorite Heart
+        // Title, Artist, & Favorite Heart (Spotify style)
         item {
             Spacer(modifier = Modifier.height(20.dp))
             Row(
@@ -191,9 +197,12 @@ fun FullScreenPlayer(
                 Column(modifier = Modifier.weight(1f)) {
                     MarqueeText(
                         text = song.title,
-                        style = MaterialTheme.typography.headlineMedium,
+                        style = MaterialTheme.typography.headlineMedium.copy(
+                            fontWeight = FontWeight.Bold
+                        ),
                         color = SpotifyTextPrimary
                     )
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = song.artistName,
                         style = MaterialTheme.typography.bodyLarge,
@@ -213,9 +222,9 @@ fun FullScreenPlayer(
             }
         }
 
-        // Interactive Progress Slider & Time Labels
+        // Scrubber / Progress Bar & Exact Spotify Timestamps
         item {
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
             val currentPos = if (isUserDraggingSlider) userSliderPosition.toLong() else uiState.currentPositionMs
             val duration = uiState.durationMs.coerceAtLeast(1L)
 
@@ -231,9 +240,9 @@ fun FullScreenPlayer(
                 },
                 valueRange = 0f..duration.toFloat(),
                 colors = SliderDefaults.colors(
-                    thumbColor = SpotifyTextPrimary,
-                    activeTrackColor = SpotifyTextPrimary,
-                    inactiveTrackColor = Color.White.copy(alpha = 0.2f)
+                    thumbColor = Color.White,
+                    activeTrackColor = Color.White,
+                    inactiveTrackColor = Color.White.copy(alpha = 0.25f)
                 ),
                 modifier = Modifier.fillMaxWidth()
             )
@@ -257,7 +266,7 @@ fun FullScreenPlayer(
             }
         }
 
-        // Playback Controls Row
+        // Spotify Playback Controls: Shuffle, Prev, White Circle Play, Next, Repeat
         item {
             Spacer(modifier = Modifier.height(16.dp))
             Row(
@@ -265,32 +274,32 @@ fun FullScreenPlayer(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Shuffle
+                // Shuffle Icon
                 IconButton(onClick = { onIntent(PlayerIntent.ToggleShuffle) }) {
                     Icon(
                         imageVector = Icons.Default.Shuffle,
                         contentDescription = "Shuffle",
-                        tint = if (uiState.isShuffleEnabled) SpotifyGreen else SpotifyTextSecondary,
+                        tint = if (uiState.isShuffleEnabled) SpotifyGreen else Color(0xFF888888),
                         modifier = Modifier.size(26.dp)
                     )
                 }
 
-                // Previous
+                // Previous Track
                 IconButton(onClick = { onIntent(PlayerIntent.SkipToPrevious) }) {
                     Icon(
                         imageVector = Icons.Default.SkipPrevious,
                         contentDescription = "Previous",
                         tint = SpotifyTextPrimary,
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier.size(38.dp)
                     )
                 }
 
-                // Play / Pause Circle Button
+                // Signature Spotify Big White Play/Pause Button
                 Box(
                     modifier = Modifier
                         .size(64.dp)
                         .clip(CircleShape)
-                        .background(SpotifyGreen)
+                        .background(Color.White)
                         .clickable { onIntent(PlayerIntent.TogglePlayPause) },
                     contentAlignment = Alignment.Center
                 ) {
@@ -302,13 +311,13 @@ fun FullScreenPlayer(
                     )
                 }
 
-                // Next
+                // Next Track
                 IconButton(onClick = { onIntent(PlayerIntent.SkipToNext) }) {
                     Icon(
                         imageVector = Icons.Default.SkipNext,
                         contentDescription = "Next",
                         tint = SpotifyTextPrimary,
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier.size(38.dp)
                     )
                 }
 
@@ -317,50 +326,99 @@ fun FullScreenPlayer(
                     Icon(
                         imageVector = if (uiState.repeatMode == RepeatMode.ONE) Icons.Default.RepeatOne else Icons.Default.Repeat,
                         contentDescription = "Repeat",
-                        tint = if (uiState.repeatMode != RepeatMode.OFF) SpotifyGreen else SpotifyTextSecondary,
+                        tint = if (uiState.repeatMode != RepeatMode.OFF) SpotifyGreen else Color(0xFF888888),
                         modifier = Modifier.size(26.dp)
                     )
                 }
             }
         }
 
-        // Synced Lyrics Card (.lrc)
+        // Spotify Bottom Actions Row: Devices, Share, Queue
+        item {
+            Spacer(modifier = Modifier.height(18.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = {}) {
+                    Icon(
+                        imageVector = Icons.Default.Devices,
+                        contentDescription = "Connect to device",
+                        tint = SpotifyTextSecondary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+
+                IconButton(onClick = {}) {
+                    Icon(
+                        imageVector = Icons.Default.Share,
+                        contentDescription = "Share",
+                        tint = SpotifyTextSecondary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+
+                IconButton(onClick = {}) {
+                    Icon(
+                        imageVector = Icons.Default.QueueMusic,
+                        contentDescription = "Queue",
+                        tint = SpotifyTextSecondary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+        }
+
+        // Synced Lyrics Card (Spotify Signature Design)
         if (uiState.lyrics.isNotEmpty()) {
             item {
-                Spacer(modifier = Modifier.height(32.dp))
+                Spacer(modifier = Modifier.height(28.dp))
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(300.dp),
+                        .height(340.dp),
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = uiState.gradientColor.copy(alpha = 0.5f)
+                        containerColor = uiState.gradientColor.copy(alpha = 0.55f)
                     )
                 ) {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(16.dp)
+                            .padding(20.dp)
                     ) {
-                        Text(
-                            text = "Lyrics",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = SpotifyTextPrimary,
-                            modifier = Modifier.padding(bottom = 12.dp)
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Lyrics",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = SpotifyTextPrimary
+                            )
+                            Text(
+                                text = "TAP TO JUMP",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                color = SpotifyTextSecondary
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
                         LazyColumn(
                             state = lyricsListState,
                             modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                            verticalArrangement = Arrangement.spacedBy(18.dp)
                         ) {
                             itemsIndexed(uiState.lyrics) { index, line ->
                                 val isActive = index == uiState.activeLyricIndex
                                 Text(
                                     text = line.text,
-                                    style = if (isActive) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium,
-                                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isActive) Color.White else Color.White.copy(alpha = 0.4f),
+                                    style = if (isActive) MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold, fontSize = 20.sp) else MaterialTheme.typography.titleMedium,
+                                    color = if (isActive) Color.White else Color.White.copy(alpha = 0.35f),
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clickable { onIntent(PlayerIntent.SeekToLyric(line.timestampMs)) }

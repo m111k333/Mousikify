@@ -124,6 +124,7 @@ fun SearchScreen(
                         selected = uiState.activeTab == SearchTab.ALL,
                         onClick = { onIntent(SearchIntent.SelectTab(SearchTab.ALL)) },
                         label = { Text("All") },
+                        shape = RoundedCornerShape(50),
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = SpotifyGreen,
                             selectedLabelColor = Color.Black,
@@ -137,6 +138,7 @@ fun SearchScreen(
                         selected = uiState.activeTab == SearchTab.SONGS,
                         onClick = { onIntent(SearchIntent.SelectTab(SearchTab.SONGS)) },
                         label = { Text("Songs (${uiState.songs.size})") },
+                        shape = RoundedCornerShape(50),
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = SpotifyGreen,
                             selectedLabelColor = Color.Black,
@@ -150,6 +152,7 @@ fun SearchScreen(
                         selected = uiState.activeTab == SearchTab.ARTISTS,
                         onClick = { onIntent(SearchIntent.SelectTab(SearchTab.ARTISTS)) },
                         label = { Text("Artists (${uiState.artists.size})") },
+                        shape = RoundedCornerShape(50),
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = SpotifyGreen,
                             selectedLabelColor = Color.Black,
@@ -163,6 +166,7 @@ fun SearchScreen(
                         selected = uiState.activeTab == SearchTab.ALBUMS,
                         onClick = { onIntent(SearchIntent.SelectTab(SearchTab.ALBUMS)) },
                         label = { Text("Albums (${uiState.albums.size})") },
+                        shape = RoundedCornerShape(50),
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = SpotifyGreen,
                             selectedLabelColor = Color.Black,

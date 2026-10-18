@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.mousikify.core.model.RepeatMode
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -37,7 +38,10 @@ class PlaybackPreferences @Inject constructor(
         val BASS_BOOST_STRENGTH = intPreferencesKey("bass_boost_strength")
         val VIRTUALIZER_STRENGTH = intPreferencesKey("virtualizer_strength")
         val REVERB_PRESET = intPreferencesKey("reverb_preset")
+        val CUSTOM_FOLDER_URIS = stringSetPreferencesKey("custom_folder_uris")
     }
+
+    val customFolderUris: Flow<Set<String>> = dataStore.data.map { it[PreferencesKeys.CUSTOM_FOLDER_URIS] ?: emptySet() }
 
     val lastPlayedSongId: Flow<Long?> = dataStore.data.map { it[PreferencesKeys.LAST_PLAYED_SONG_ID] }
     val lastPlayedPositionMs: Flow<Long> = dataStore.data.map { it[PreferencesKeys.LAST_PLAYED_POSITION_MS] ?: 0L }
@@ -103,5 +107,19 @@ class PlaybackPreferences @Inject constructor(
 
     suspend fun setReverbPreset(preset: Short) {
         dataStore.edit { it[PreferencesKeys.REVERB_PRESET] = preset.toInt() }
+    }
+
+    suspend fun addCustomFolderUri(uriString: String) {
+        dataStore.edit {
+            val current = it[PreferencesKeys.CUSTOM_FOLDER_URIS] ?: emptySet()
+            it[PreferencesKeys.CUSTOM_FOLDER_URIS] = current + uriString
+        }
+    }
+
+    suspend fun removeCustomFolderUri(uriString: String) {
+        dataStore.edit {
+            val current = it[PreferencesKeys.CUSTOM_FOLDER_URIS] ?: emptySet()
+            it[PreferencesKeys.CUSTOM_FOLDER_URIS] = current - uriString
+        }
     }
 }
