@@ -25,9 +25,16 @@ data class Playlist(
     val songCount: Int = 0
 )
 
-data class LyricLine(
+data class LyricWord(
     val timestampMs: Long,
     val text: String
+)
+
+data class LyricLine(
+    val timestampMs: Long,
+    val text: String,
+    val words: List<LyricWord> = emptyList(),
+    val isSynced: Boolean = true
 )
 
 enum class RepeatMode {
@@ -57,3 +64,32 @@ data class Folder(
     val name: String,
     val songCount: Int
 )
+
+/**
+ * Generates a deterministic negative Long ID for remote YouTube videoIds so they never collide
+ * with positive MediaStore IDs or SAF bit-flagged IDs in Room and QueueManager.
+ */
+fun String.toRemoteSongId(): Long {
+    var h = 1125899906842597L
+    for (i in indices) {
+        h = 31 * h + this[i].code
+    }
+    val positiveHash = h and 0x3FFFFFFFFFFFFFFFL
+    return -(positiveHash.coerceAtLeast(1L))
+}
+
+/**
+ * Playback State Machine for local and remote streaming.
+ */
+sealed interface PlaybackStatus {
+    data object Idle : PlaybackStatus
+    data class Preparing(val isResolvingStream: Boolean) : PlaybackStatus
+    data class Buffering(val bufferedPercentage: Int) : PlaybackStatus
+    data object Playing : PlaybackStatus
+    data object Paused : PlaybackStatus
+    data class Error(
+        val errorCode: Int,
+        val message: String,
+        val isRecoverable: Boolean
+    ) : PlaybackStatus
+}

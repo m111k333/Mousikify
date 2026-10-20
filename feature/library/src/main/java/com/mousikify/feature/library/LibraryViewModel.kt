@@ -18,21 +18,30 @@ import com.mousikify.core.scanner.indexer.MediaStoreScanner
 import com.mousikify.core.scanner.indexer.SafFolderScanner
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 enum class LibraryFilter {
-    ALL_SONGS,
     PLAYLISTS,
-    ARTISTS,
     ALBUMS,
+    ARTISTS,
+    ALL_SONGS,
     FOLDERS
+}
+
+enum class LibrarySortOrder(val label: String) {
+    ALPHABETICAL_ASC("Alphabetical (A–Z)"),
+    ALPHABETICAL_DESC("Alphabetical (Z–A)"),
+    RECENTLY_ADDED("Recently Added"),
+    MOST_SONGS_OR_PLAYED("Most Songs / Played")
 }
 
 sealed interface LibraryDetailView {
@@ -43,7 +52,8 @@ sealed interface LibraryDetailView {
 }
 
 data class LibraryUiState(
-    val activeFilter: LibraryFilter = LibraryFilter.ALL_SONGS,
+    val activeFilter: LibraryFilter = LibraryFilter.PLAYLISTS,
+    val sortOrder: LibrarySortOrder = LibrarySortOrder.ALPHABETICAL_ASC,
     val songs: List<Song> = emptyList(),
     val playlists: List<Playlist> = emptyList(),
     val artists: List<Artist> = emptyList(),
@@ -65,6 +75,8 @@ data class LibraryUiState(
 
 sealed interface LibraryIntent {
     data class SetFilter(val filter: LibraryFilter) : LibraryIntent
+    data class SetSortOrder(val sortOrder: LibrarySortOrder) : LibraryIntent
+    data object CycleSortOrder : LibraryIntent
     data class PlaySong(val song: Song, val queue: List<Song>) : LibraryIntent
     data class PlayAll(val songs: List<Song>, val startIndex: Int = 0) : LibraryIntent
     data class ToggleShuffle(val songs: List<Song>? = null) : LibraryIntent
@@ -89,6 +101,8 @@ sealed interface LibraryIntent {
     data class AddSongToPlaylist(val playlistId: Long, val songId: Long) : LibraryIntent
     data class RemoveSongFromPlaylist(val playlistId: Long, val songId: Long) : LibraryIntent
     data class DeletePlaylist(val playlistId: Long) : LibraryIntent
+    data class RenamePlaylist(val playlistId: Long, val newName: String) : LibraryIntent
+    data class ReorderPlaylist(val playlistId: Long, val orderedSongIds: List<Long>) : LibraryIntent
 }
 
 @HiltViewModel
@@ -102,7 +116,8 @@ class LibraryViewModel @Inject constructor(
     private val preferences: PlaybackPreferences
 ) : ViewModel() {
 
-    private val _activeFilter = MutableStateFlow(LibraryFilter.ALL_SONGS)
+    private val _activeFilter = MutableStateFlow(LibraryFilter.PLAYLISTS)
+    private val _sortOrder = MutableStateFlow(LibrarySortOrder.ALPHABETICAL_ASC)
     private val _selectedSongIds = MutableStateFlow<Set<Long>>(emptySet())
     private val _showCreatePlaylistDialog = MutableStateFlow(false)
     private val _isScanning = MutableStateFlow(false)
@@ -112,6 +127,10 @@ class LibraryViewModel @Inject constructor(
     private val _showAddToPlaylistForSelection = MutableStateFlow(false)
     private val _showAddSongsPickerForPlaylist = MutableStateFlow<Playlist?>(null)
     private var detailJob: Job? = null
+
+    private val filterAndSortState = combine(_activeFilter, _sortOrder) { filter, sort ->
+        Pair(filter, sort)
+    }
 
     private val selectionState = combine(_selectedSongIds, _showCreatePlaylistDialog) { ids, dlg ->
         Pair(ids, dlg)
@@ -153,13 +172,43 @@ class LibraryViewModel @Inject constructor(
     }
 
     private val contentState = combine(
-        _activeFilter,
+        filterAndSortState,
         mainLibrary,
         mediaCollections,
         selectionState
-    ) { filter, (songs, playlists), (artists, albums, folders), (selectedIds, showDialog) ->
-        Tuple4(filter, songs, playlists, artists, albums, folders, selectedIds, showDialog)
-    }
+    ) { (filter, sortOrder), (songs, playlists), (artists, albums, folders), (selectedIds, showDialog) ->
+        val sortedSongs = when (sortOrder) {
+            LibrarySortOrder.ALPHABETICAL_ASC -> songs.sortedBy { it.title.lowercase() }
+            LibrarySortOrder.ALPHABETICAL_DESC -> songs.sortedByDescending { it.title.lowercase() }
+            LibrarySortOrder.RECENTLY_ADDED -> songs.sortedByDescending { it.dateAdded }
+            LibrarySortOrder.MOST_SONGS_OR_PLAYED -> songs.sortedByDescending { it.playCount }
+        }
+        val sortedPlaylists = when (sortOrder) {
+            LibrarySortOrder.ALPHABETICAL_ASC -> playlists.sortedBy { it.name.lowercase() }
+            LibrarySortOrder.ALPHABETICAL_DESC -> playlists.sortedByDescending { it.name.lowercase() }
+            LibrarySortOrder.RECENTLY_ADDED -> playlists.sortedByDescending { it.createdAt }
+            LibrarySortOrder.MOST_SONGS_OR_PLAYED -> playlists.sortedByDescending { it.songCount }
+        }
+        val sortedArtists = when (sortOrder) {
+            LibrarySortOrder.ALPHABETICAL_ASC -> artists.sortedBy { it.name.lowercase() }
+            LibrarySortOrder.ALPHABETICAL_DESC -> artists.sortedByDescending { it.name.lowercase() }
+            LibrarySortOrder.RECENTLY_ADDED -> artists.sortedByDescending { it.id }
+            LibrarySortOrder.MOST_SONGS_OR_PLAYED -> artists.sortedByDescending { it.songCount }
+        }
+        val sortedAlbums = when (sortOrder) {
+            LibrarySortOrder.ALPHABETICAL_ASC -> albums.sortedBy { it.title.lowercase() }
+            LibrarySortOrder.ALPHABETICAL_DESC -> albums.sortedByDescending { it.title.lowercase() }
+            LibrarySortOrder.RECENTLY_ADDED -> albums.sortedByDescending { it.year }
+            LibrarySortOrder.MOST_SONGS_OR_PLAYED -> albums.sortedByDescending { it.songCount }
+        }
+        val sortedFolders = when (sortOrder) {
+            LibrarySortOrder.ALPHABETICAL_ASC -> folders.sortedBy { it.name.lowercase() }
+            LibrarySortOrder.ALPHABETICAL_DESC -> folders.sortedByDescending { it.name.lowercase() }
+            LibrarySortOrder.RECENTLY_ADDED -> folders.sortedByDescending { it.songCount }
+            LibrarySortOrder.MOST_SONGS_OR_PLAYED -> folders.sortedByDescending { it.songCount }
+        }
+        Tuple4(filter, sortOrder, sortedSongs, sortedPlaylists, sortedArtists, sortedAlbums, sortedFolders, selectedIds, showDialog)
+    }.flowOn(Dispatchers.Default)
 
     val uiState: StateFlow<LibraryUiState> = combine(
         contentState,
@@ -169,6 +218,7 @@ class LibraryViewModel @Inject constructor(
     ) { content, (isScanning, statusMessage, activeDetail), (currentSong, isPlaying, shuffle), (songToAdd, showSelection, pickerPlaylist) ->
         LibraryUiState(
             activeFilter = content.filter,
+            sortOrder = content.sortOrder,
             songs = content.songs,
             playlists = content.playlists,
             artists = content.artists,
@@ -196,6 +246,12 @@ class LibraryViewModel @Inject constructor(
     fun onIntent(intent: LibraryIntent) {
         when (intent) {
             is LibraryIntent.SetFilter -> _activeFilter.value = intent.filter
+            is LibraryIntent.SetSortOrder -> _sortOrder.value = intent.sortOrder
+            is LibraryIntent.CycleSortOrder -> {
+                val entries = LibrarySortOrder.entries
+                val nextIndex = (entries.indexOf(_sortOrder.value) + 1) % entries.size
+                _sortOrder.value = entries[nextIndex]
+            }
             is LibraryIntent.PlaySong -> {
                 musicController.playQueue(intent.queue, intent.queue.indexOfFirst { it.id == intent.song.id }.coerceAtLeast(0))
             }
@@ -225,24 +281,46 @@ class LibraryViewModel @Inject constructor(
             is LibraryIntent.AddSongToPlaylist -> {
                 viewModelScope.launch {
                     playlistRepository.addSongToPlaylist(intent.playlistId, intent.songId)
+                    val song = songRepository.getSongByIdSync(intent.songId)
+                    if (song != null && song.isRemoteStream) {
+                        musicController.downloadSongForOffline(song)
+                    }
                     _statusMessage.value = "Added to playlist"
                 }
             }
             is LibraryIntent.RemoveSongFromPlaylist -> {
                 viewModelScope.launch {
                     playlistRepository.removeSongFromPlaylist(intent.playlistId, intent.songId)
+                    songRepository.deleteNonFavoriteRemoteSongs()
+                    musicController.pruneOrphanedCache()
                     _statusMessage.value = "Removed from playlist"
                 }
             }
             is LibraryIntent.DeletePlaylist -> {
                 viewModelScope.launch {
                     playlistRepository.deletePlaylist(intent.playlistId)
+                    songRepository.deleteNonFavoriteRemoteSongs()
+                    musicController.pruneOrphanedCache()
                     if (_activeDetail.value is LibraryDetailView.PlaylistDetail &&
                         (_activeDetail.value as LibraryDetailView.PlaylistDetail).playlist.id == intent.playlistId
                     ) {
                         _activeDetail.value = null
                     }
                     _statusMessage.value = "Playlist deleted"
+                }
+            }
+            is LibraryIntent.RenamePlaylist -> {
+                viewModelScope.launch {
+                    val trimmed = intent.newName.trim()
+                    if (trimmed.isNotEmpty()) {
+                        playlistRepository.renamePlaylist(intent.playlistId, trimmed)
+                        _statusMessage.value = "Playlist renamed to '$trimmed'"
+                    }
+                }
+            }
+            is LibraryIntent.ReorderPlaylist -> {
+                viewModelScope.launch {
+                    playlistRepository.reorderPlaylist(intent.playlistId, intent.orderedSongIds)
                 }
             }
             is LibraryIntent.CreatePlaylist -> {
@@ -253,11 +331,19 @@ class LibraryViewModel @Inject constructor(
                         addedCount = _selectedSongIds.value.size
                         _selectedSongIds.value.forEach { songId ->
                             playlistRepository.addSongToPlaylist(id, songId)
+                            val song = songRepository.getSongByIdSync(songId)
+                            if (song != null && song.isRemoteStream) {
+                                musicController.downloadSongForOffline(song)
+                            }
                         }
                         _selectedSongIds.value = emptySet()
                     } else if (_songToAddToPlaylist.value != null) {
                         addedCount = 1
-                        playlistRepository.addSongToPlaylist(id, _songToAddToPlaylist.value!!.id)
+                        val song = _songToAddToPlaylist.value!!
+                        playlistRepository.addSongToPlaylist(id, song.id)
+                        if (song.isRemoteStream) {
+                            musicController.downloadSongForOffline(song)
+                        }
                         _songToAddToPlaylist.value = null
                     }
                     _showCreatePlaylistDialog.value = false
@@ -274,6 +360,10 @@ class LibraryViewModel @Inject constructor(
                     val ids = _selectedSongIds.value.toList()
                     ids.forEach { songId ->
                         playlistRepository.addSongToPlaylist(intent.playlistId, songId)
+                        val song = songRepository.getSongByIdSync(songId)
+                        if (song != null && song.isRemoteStream) {
+                            musicController.downloadSongForOffline(song)
+                        }
                     }
                     _selectedSongIds.value = emptySet()
                     _showAddToPlaylistForSelection.value = false
@@ -347,8 +437,18 @@ class LibraryViewModel @Inject constructor(
             is LibraryIntent.OpenPlaylist -> {
                 detailJob?.cancel()
                 detailJob = viewModelScope.launch {
-                    playlistRepository.getPlaylistSongs(intent.playlist.id).collect { songs ->
-                        _activeDetail.value = LibraryDetailView.PlaylistDetail(intent.playlist, songs)
+                    combine(
+                        playlistRepository.getPlaylistById(intent.playlist.id),
+                        playlistRepository.getPlaylistSongs(intent.playlist.id)
+                    ) { updatedPlaylist, songs ->
+                        Pair(updatedPlaylist ?: intent.playlist, songs)
+                    }.collect { (playlist, songs) ->
+                        songs.forEach { song ->
+                            if (song.isRemoteStream && !musicController.isSongCached(song)) {
+                                musicController.downloadSongForOffline(song)
+                            }
+                        }
+                        _activeDetail.value = LibraryDetailView.PlaylistDetail(playlist, songs)
                     }
                 }
             }
@@ -382,6 +482,7 @@ class LibraryViewModel @Inject constructor(
 
 private data class Tuple4(
     val filter: LibraryFilter,
+    val sortOrder: LibrarySortOrder,
     val songs: List<Song>,
     val playlists: List<Playlist>,
     val artists: List<Artist>,

@@ -9,15 +9,11 @@ import com.mousikify.core.database.MousikifyDatabase
 import com.mousikify.core.database.dao.EqPresetDao
 import com.mousikify.core.database.dao.PlaylistDao
 import com.mousikify.core.database.dao.SongDao
-import com.mousikify.core.database.dao.TrackDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import javax.inject.Provider
 import javax.inject.Singleton
 
@@ -59,6 +55,12 @@ object DatabaseModule {
         }
     }
 
+    private val MIGRATION_3_4 = object : Migration(3, 4) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("DROP TABLE IF EXISTS tracks")
+        }
+    }
+
     @Provides
     @Singleton
     fun provideMousikifyDatabase(
@@ -70,23 +72,21 @@ object DatabaseModule {
             MousikifyDatabase::class.java,
             MousikifyDatabase.DATABASE_NAME
         )
-        .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
         .fallbackToDestructiveMigration()
         .addCallback(object : RoomDatabase.Callback() {
             override fun onCreate(db: SupportSQLiteDatabase) {
                 super.onCreate(db)
-                // Pre-populate standard 10-band presets
-                CoroutineScope(Dispatchers.IO).launch {
-                    val presets = listOf(
-                        "INSERT INTO eq_presets (presetId, name, bandLevelsMb, bassBoostStrength, virtualizerStrength, reverbPreset, isCustom) VALUES (1, 'Flat', '0,0,0,0,0,0,0,0,0,0', 0, 0, 0, 0)",
-                        "INSERT INTO eq_presets (presetId, name, bandLevelsMb, bassBoostStrength, virtualizerStrength, reverbPreset, isCustom) VALUES (2, 'Bass Boost', '500,450,350,200,50,0,0,0,0,0', 400, 0, 0, 0)",
-                        "INSERT INTO eq_presets (presetId, name, bandLevelsMb, bassBoostStrength, virtualizerStrength, reverbPreset, isCustom) VALUES (3, 'Rock', '450,300,150,0,-100,-50,150,300,400,450', 100, 150, 0, 0)",
-                        "INSERT INTO eq_presets (presetId, name, bandLevelsMb, bassBoostStrength, virtualizerStrength, reverbPreset, isCustom) VALUES (4, 'Pop', '-150,-50,150,300,400,350,200,100,50,-50', 50, 100, 0, 0)",
-                        "INSERT INTO eq_presets (presetId, name, bandLevelsMb, bassBoostStrength, virtualizerStrength, reverbPreset, isCustom) VALUES (5, 'Electronic', '400,350,150,0,-150,100,150,250,400,450', 250, 200, 0, 0)",
-                        "INSERT INTO eq_presets (presetId, name, bandLevelsMb, bassBoostStrength, virtualizerStrength, reverbPreset, isCustom) VALUES (6, 'Vocal', '-200,-200,-100,150,350,350,300,150,0,-150', 0, 100, 1, 0)"
-                    )
-                    presets.forEach { db.execSQL(it) }
-                }
+                // Pre-populate standard 10-band presets synchronously within database creation
+                val presets = listOf(
+                    "INSERT INTO eq_presets (presetId, name, bandLevelsMb, bassBoostStrength, virtualizerStrength, reverbPreset, isCustom) VALUES (1, 'Flat', '0,0,0,0,0,0,0,0,0,0', 0, 0, 0, 0)",
+                    "INSERT INTO eq_presets (presetId, name, bandLevelsMb, bassBoostStrength, virtualizerStrength, reverbPreset, isCustom) VALUES (2, 'Bass Boost', '500,450,350,200,50,0,0,0,0,0', 400, 0, 0, 0)",
+                    "INSERT INTO eq_presets (presetId, name, bandLevelsMb, bassBoostStrength, virtualizerStrength, reverbPreset, isCustom) VALUES (3, 'Rock', '450,300,150,0,-100,-50,150,300,400,450', 100, 150, 0, 0)",
+                    "INSERT INTO eq_presets (presetId, name, bandLevelsMb, bassBoostStrength, virtualizerStrength, reverbPreset, isCustom) VALUES (4, 'Pop', '-150,-50,150,300,400,350,200,100,50,-50', 50, 100, 0, 0)",
+                    "INSERT INTO eq_presets (presetId, name, bandLevelsMb, bassBoostStrength, virtualizerStrength, reverbPreset, isCustom) VALUES (5, 'Electronic', '400,350,150,0,-150,100,150,250,400,450', 250, 200, 0, 0)",
+                    "INSERT INTO eq_presets (presetId, name, bandLevelsMb, bassBoostStrength, virtualizerStrength, reverbPreset, isCustom) VALUES (6, 'Vocal', '-200,-200,-100,150,350,350,300,150,0,-150', 0, 100, 1, 0)"
+                )
+                presets.forEach { db.execSQL(it) }
             }
         }).build()
     }
@@ -99,7 +99,4 @@ object DatabaseModule {
 
     @Provides
     fun provideEqPresetDao(database: MousikifyDatabase): EqPresetDao = database.eqPresetDao()
-
-    @Provides
-    fun provideTrackDao(database: MousikifyDatabase): TrackDao = database.trackDao()
 }

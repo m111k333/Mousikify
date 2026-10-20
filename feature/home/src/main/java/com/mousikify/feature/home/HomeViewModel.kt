@@ -5,8 +5,6 @@ import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.mousikify.core.database.dao.TrackDao
-import com.mousikify.core.database.entity.TrackEntity
 import com.mousikify.core.database.preferences.PlaybackPreferences
 import com.mousikify.core.database.repository.PlaylistRepository
 import com.mousikify.core.database.repository.SongRepository
@@ -17,7 +15,6 @@ import com.mousikify.core.model.Song
 import com.mousikify.core.scanner.classifier.MetadataClassifier
 import com.mousikify.core.scanner.indexer.MediaStoreScanner
 import com.mousikify.core.scanner.indexer.SafFolderScanner
-import com.mousikify.core.scanner.work.AudioAnalysisWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -27,6 +24,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.Calendar
@@ -51,6 +49,7 @@ sealed interface HomeDetailView {
 data class HomeUiState(
     val greeting: String = "",
     val totalSongCount: Int = 0,
+    val allSongs: List<Song> = emptyList(),
     val recentlyPlayed: List<Song> = emptyList(),
     val recentlyAdded: List<Song> = emptyList(),
     val forgottenFavorites: List<Song> = emptyList(),
@@ -81,6 +80,11 @@ sealed interface HomeIntent {
     data class ToggleFavorite(val song: Song) : HomeIntent
     data object PlayLikedSongs : HomeIntent
     data class ImportFolder(val uri: Uri) : HomeIntent
+    data class DeletePlaylist(val playlistId: Long) : HomeIntent
+    data class RenamePlaylist(val playlistId: Long, val newName: String) : HomeIntent
+    data class AddSongToPlaylist(val playlistId: Long, val songId: Long) : HomeIntent
+    data class RemoveSongFromPlaylist(val playlistId: Long, val songId: Long) : HomeIntent
+    data class ReorderPlaylist(val playlistId: Long, val orderedSongIds: List<Long>) : HomeIntent
     data object Rescan : HomeIntent
     data object DismissStatusMessage : HomeIntent
 }
@@ -93,15 +97,14 @@ class HomeViewModel @Inject constructor(
     private val musicController: MusicController,
     private val mediaStoreScanner: MediaStoreScanner,
     private val safFolderScanner: SafFolderScanner,
-    private val preferences: PlaybackPreferences,
-    private val trackDao: TrackDao
+    private val preferences: PlaybackPreferences
 ) : ViewModel() {
 
     init {
-        // Enqueue background analysis immediately without waiting for charging/idle
+        // Clean up any non-favorite remote stream tracks that may have polluted the songs table
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                AudioAnalysisWorker.enqueue(context, requireCharging = false, requireIdle = false)
+                songRepository.deleteNonFavoriteRemoteSongs()
             } catch (_: Exception) {}
         }
     }
@@ -141,10 +144,9 @@ class HomeViewModel @Inject constructor(
         songRepository.allSongs,
         playlistRepository.playlists,
         songRepository.favorites,
-        songRepository.albums,
-        trackDao.getAllTracks()
-    ) { allSongs, playlists, favorites, albums, allTracks ->
-        HomeMediaData(allSongs, playlists, favorites, albums, allTracks)
+        songRepository.albums
+    ) { allSongs, playlists, favorites, albums ->
+        HomeMediaData(allSongs, playlists, favorites, albums)
     }
 
     private val historyData = combine(
@@ -158,10 +160,10 @@ class HomeViewModel @Inject constructor(
         mediaCollections,
         historyData
     ) { media, (recent, forgotten) ->
-        val mixes = generateSmartMixes(media.songs, media.favorites, media.tracks)
+        val mixes = generateSmartMixes(media.songs, media.favorites)
         val recentlyAdded = media.songs.sortedByDescending { it.dateAdded }.take(20)
         HomeContentData(media, recent, recentlyAdded, forgotten, mixes)
-    }
+    }.flowOn(Dispatchers.Default)
 
     val uiState: StateFlow<HomeUiState> = combine(
         homeStaticContent,
@@ -171,6 +173,7 @@ class HomeViewModel @Inject constructor(
         HomeUiState(
             greeting = greeting,
             totalSongCount = content.media.songs.size,
+            allSongs = content.media.songs,
             recentlyPlayed = content.recent,
             recentlyAdded = content.recentlyAdded,
             forgottenFavorites = content.forgotten,
@@ -194,30 +197,17 @@ class HomeViewModel @Inject constructor(
 
     private fun generateSmartMixes(
         allSongs: List<Song>,
-        favorites: List<Song>,
-        allTracks: List<TrackEntity>
+        favorites: List<Song>
     ): List<SmartMix> {
         if (allSongs.isEmpty()) return emptyList()
 
         val mixes = mutableListOf<SmartMix>()
-        val tracksByUri = allTracks.associateBy { it.uri }
 
         fun getDecade(song: Song): String? {
-            val track = tracksByUri[song.contentUri]
-            return track?.decade ?: MetadataClassifier.extractDecade(song.year)
+            return MetadataClassifier.extractDecade(song.year)
         }
 
         fun getGenre(song: Song): String {
-            val track = tracksByUri[song.contentUri]
-            val normGenre = track?.normalizedGenre
-            if (!normGenre.isNullOrBlank() && normGenre != "Other") {
-                return normGenre
-            }
-            val raw = track?.rawGenre
-            if (!raw.isNullOrBlank()) {
-                val g = MetadataClassifier.normalizeGenre(raw)
-                if (g != "Other") return g
-            }
             // Check folder path
             val folderGenre = MetadataClassifier.normalizeGenre(song.folderPath)
             if (folderGenre != "Other") return folderGenre
@@ -230,11 +220,6 @@ class HomeViewModel @Inject constructor(
         }
 
         fun getVibe(song: Song): String {
-            val track = tracksByUri[song.contentUri]
-            val trackVibe = track?.vibeCategory
-            if (track != null && track.isAnalyzed && !trackVibe.isNullOrBlank()) {
-                return trackVibe
-            }
             val genre = getGenre(song)
             return when (genre) {
                 "Rock", "Electronic" -> "High Energy / Workout"
@@ -323,11 +308,7 @@ class HomeViewModel @Inject constructor(
 
         // 3. VIBE / SOUND MIXES
         // High Energy / Workout
-        val workoutSongs = allSongs.filter { song ->
-            val track = tracksByUri[song.contentUri]
-            (track != null && (track.rmsEnergy >= 0.60f || track.bpm >= 125 || track.vibeCategory == "High Energy / Workout")) ||
-            getVibe(song) == "High Energy / Workout"
-        }
+        val workoutSongs = allSongs.filter { getVibe(it) == "High Energy / Workout" }
         if (workoutSongs.isNotEmpty()) {
             mixes.add(
                 SmartMix(
@@ -341,11 +322,7 @@ class HomeViewModel @Inject constructor(
         }
 
         // Chill / Relaxed
-        val chillSongs = allSongs.filter { song ->
-            val track = tracksByUri[song.contentUri]
-            (track != null && (track.rmsEnergy <= 0.35f || track.vibeCategory == "Chill / Relaxed")) ||
-            getVibe(song) == "Chill / Relaxed"
-        }
+        val chillSongs = allSongs.filter { getVibe(it) == "Chill / Relaxed" }
         if (chillSongs.isNotEmpty()) {
             mixes.add(
                 SmartMix(
@@ -359,11 +336,7 @@ class HomeViewModel @Inject constructor(
         }
 
         // Focus / Ambient
-        val focusSongs = allSongs.filter { song ->
-            val track = tracksByUri[song.contentUri]
-            (track != null && (track.rmsEnergy <= 0.25f || track.vibeCategory == "Focus / Ambient")) ||
-            getVibe(song) == "Focus / Ambient"
-        }
+        val focusSongs = allSongs.filter { getVibe(it) == "Focus / Ambient" }
         if (focusSongs.isNotEmpty()) {
             mixes.add(
                 SmartMix(
@@ -377,11 +350,7 @@ class HomeViewModel @Inject constructor(
         }
 
         // Mid-Tempo Flow
-        val flowSongs = allSongs.filter { song ->
-            val track = tracksByUri[song.contentUri]
-            (track != null && track.vibeCategory == "Mid-Tempo Flow") ||
-            getVibe(song) == "Mid-Tempo Flow"
-        }
+        val flowSongs = allSongs.filter { getVibe(it) == "Mid-Tempo Flow" }
         if (flowSongs.isNotEmpty()) {
             mixes.add(
                 SmartMix(
@@ -451,8 +420,18 @@ class HomeViewModel @Inject constructor(
             is HomeIntent.OpenPlaylist -> {
                 detailJob?.cancel()
                 detailJob = viewModelScope.launch {
-                    playlistRepository.getPlaylistSongs(intent.playlist.id).collect { songs ->
-                        _activeDetail.value = HomeDetailView.PlaylistDetail(intent.playlist, songs)
+                    combine(
+                        playlistRepository.getPlaylistById(intent.playlist.id),
+                        playlistRepository.getPlaylistSongs(intent.playlist.id)
+                    ) { updatedPlaylist, songs ->
+                        Pair(updatedPlaylist ?: intent.playlist, songs)
+                    }.collect { (playlist, songs) ->
+                        songs.forEach { song ->
+                            if (song.isRemoteStream && !musicController.isSongCached(song)) {
+                                musicController.downloadSongForOffline(song)
+                            }
+                        }
+                        _activeDetail.value = HomeDetailView.PlaylistDetail(playlist, songs)
                     }
                 }
             }
@@ -528,6 +507,51 @@ class HomeViewModel @Inject constructor(
                     }
                 }
             }
+            is HomeIntent.DeletePlaylist -> {
+                viewModelScope.launch {
+                    playlistRepository.deletePlaylist(intent.playlistId)
+                    songRepository.deleteNonFavoriteRemoteSongs()
+                    musicController.pruneOrphanedCache()
+                    if (_activeDetail.value is HomeDetailView.PlaylistDetail &&
+                        (_activeDetail.value as HomeDetailView.PlaylistDetail).playlist.id == intent.playlistId
+                    ) {
+                        _activeDetail.value = null
+                    }
+                    _statusMessage.value = "Playlist deleted"
+                }
+            }
+            is HomeIntent.RenamePlaylist -> {
+                viewModelScope.launch {
+                    val trimmed = intent.newName.trim()
+                    if (trimmed.isNotEmpty()) {
+                        playlistRepository.renamePlaylist(intent.playlistId, trimmed)
+                        _statusMessage.value = "Playlist renamed to '$trimmed'"
+                    }
+                }
+            }
+            is HomeIntent.AddSongToPlaylist -> {
+                viewModelScope.launch {
+                    playlistRepository.addSongToPlaylist(intent.playlistId, intent.songId)
+                    val song = songRepository.getSongByIdSync(intent.songId)
+                    if (song != null && song.isRemoteStream) {
+                        musicController.downloadSongForOffline(song)
+                    }
+                    _statusMessage.value = "Added to playlist"
+                }
+            }
+            is HomeIntent.RemoveSongFromPlaylist -> {
+                viewModelScope.launch {
+                    playlistRepository.removeSongFromPlaylist(intent.playlistId, intent.songId)
+                    songRepository.deleteNonFavoriteRemoteSongs()
+                    musicController.pruneOrphanedCache()
+                    _statusMessage.value = "Removed from playlist"
+                }
+            }
+            is HomeIntent.ReorderPlaylist -> {
+                viewModelScope.launch {
+                    playlistRepository.reorderPlaylist(intent.playlistId, intent.orderedSongIds)
+                }
+            }
             is HomeIntent.Rescan -> {
                 viewModelScope.launch {
                     _isScanning.value = true
@@ -570,8 +594,7 @@ private data class HomeMediaData(
     val songs: List<Song>,
     val playlists: List<Playlist>,
     val favorites: List<Song>,
-    val albums: List<Album>,
-    val tracks: List<TrackEntity> = emptyList()
+    val albums: List<Album>
 )
 
 private data class HomeContentData(

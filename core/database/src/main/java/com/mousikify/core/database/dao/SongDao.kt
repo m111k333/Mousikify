@@ -26,11 +26,9 @@ data class SongDedupRecord(
 @Dao
 interface SongDao {
 
-    @Query("SELECT * FROM songs ORDER BY title ASC")
+    @Query("SELECT * FROM songs WHERE id > 0 AND content_uri NOT LIKE 'ytm://%' ORDER BY title ASC")
     fun getAllSongs(): Flow<List<SongEntity>>
 
-    @Query("SELECT * FROM songs ORDER BY date_added DESC")
-    fun getSongsByDateAdded(): Flow<List<SongEntity>>
 
     @Query("SELECT * FROM songs WHERE id = :id")
     fun getSongById(id: Long): Flow<SongEntity?>
@@ -48,24 +46,24 @@ interface SongDao {
     @Query("SELECT * FROM songs WHERE play_count >= 3 ORDER BY last_played_at ASC LIMIT :limit")
     fun getForgottenFavorites(limit: Int = 20): Flow<List<SongEntity>>
 
-    @Query("SELECT * FROM songs WHERE folder_path = :folderPath ORDER BY title ASC")
+    @Query("SELECT * FROM songs WHERE folder_path = :folderPath AND id > 0 AND content_uri NOT LIKE 'ytm://%' ORDER BY title ASC")
     fun getSongsByFolder(folderPath: String): Flow<List<SongEntity>>
 
-    @Query("SELECT * FROM songs WHERE album_id = :albumId ORDER BY trackNumber ASC, title ASC")
+    @Query("SELECT * FROM songs WHERE album_id = :albumId AND id > 0 AND content_uri NOT LIKE 'ytm://%' ORDER BY trackNumber ASC, title ASC")
     fun getSongsByAlbum(albumId: Long): Flow<List<SongEntity>>
 
-    @Query("SELECT * FROM songs WHERE artist_id = :artistId ORDER BY album_name ASC, trackNumber ASC")
+    @Query("SELECT * FROM songs WHERE artist_id = :artistId AND id > 0 AND content_uri NOT LIKE 'ytm://%' ORDER BY album_name ASC, trackNumber ASC")
     fun getSongsByArtist(artistId: Long): Flow<List<SongEntity>>
 
     @Query("""
         SELECT s.* FROM songs s
         JOIN songs_fts f ON s.id = f.rowid
-        WHERE songs_fts MATCH :searchQuery
+        WHERE songs_fts MATCH :searchQuery AND s.id > 0 AND s.content_uri NOT LIKE 'ytm://%'
         ORDER BY s.play_count DESC, s.title ASC
     """)
     fun searchSongsFts(searchQuery: String): Flow<List<SongEntity>>
 
-    @Query("SELECT id, date_modified AS dateModified FROM songs")
+    @Query("SELECT id, date_modified AS dateModified FROM songs WHERE id > 0 AND content_uri NOT LIKE 'ytm://%'")
     suspend fun getAllMediaIdsAndModifiedDates(): List<MediaIdDate>
 
     @Upsert
@@ -74,24 +72,33 @@ interface SongDao {
     @Query("DELETE FROM songs WHERE id IN (:ids)")
     suspend fun deleteSongsByIds(ids: List<Long>)
 
+    @Query("""
+        DELETE FROM songs
+        WHERE (id < 0 OR content_uri LIKE 'ytm://%')
+          AND is_favorite = 0
+          AND id NOT IN (SELECT DISTINCT songId FROM playlist_songs)
+    """)
+    suspend fun deleteNonFavoriteRemoteSongs()
+
+    @Query("""
+        SELECT content_uri FROM songs
+        WHERE content_uri LIKE 'ytm://%'
+          AND (is_favorite = 1 OR id IN (SELECT DISTINCT songId FROM playlist_songs))
+    """)
+    suspend fun getPinnedRemoteContentUris(): List<String>
+
     @Query("UPDATE songs SET is_favorite = :isFavorite WHERE id = :songId")
     suspend fun setFavorite(songId: Long, isFavorite: Boolean)
 
     @Query("UPDATE songs SET play_count = play_count + 1, last_played_at = :timestamp WHERE id = :songId")
     suspend fun recordPlay(songId: Long, timestamp: Long)
 
-    @Query("SELECT DISTINCT folder_path FROM songs WHERE folder_path != '' ORDER BY folder_path ASC")
-    fun getAllFolderPaths(): Flow<List<String>>
-
-    @Query("SELECT COUNT(*) FROM songs")
-    fun getSongCount(): Flow<Int>
-
-    @Query("SELECT id, content_uri AS contentUri, title, artist_name AS artistName, durationMs, folder_path AS folderPath FROM songs")
+    @Query("SELECT id, content_uri AS contentUri, title, artist_name AS artistName, durationMs, folder_path AS folderPath FROM songs WHERE id > 0 AND content_uri NOT LIKE 'ytm://%'")
     suspend fun getAllDedupRecords(): List<SongDedupRecord>
 
     @Query("UPDATE songs SET artwork_uri = :artworkUri WHERE id = :songId")
     suspend fun updateArtworkUri(songId: Long, artworkUri: String)
 
-    @Query("SELECT * FROM songs WHERE artwork_uri IS NULL OR artwork_uri = ''")
-    suspend fun getSongsWithoutArtwork(): List<SongEntity>
+    @Query("UPDATE songs SET lrc_path = :lrcPath WHERE id = :songId")
+    suspend fun updateLrcPath(songId: Long, lrcPath: String)
 }

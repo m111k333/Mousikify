@@ -3,6 +3,16 @@ package com.mousikify.feature.home
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -21,23 +31,33 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -47,11 +67,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -70,6 +94,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil3.compose.AsyncImage
+import com.mousikify.core.designsystem.component.AddSongsToPlaylistDialog
+import com.mousikify.core.designsystem.component.MediaDetailView
 import com.mousikify.core.designsystem.component.TrackListItem
 import com.mousikify.core.designsystem.theme.SpotifyBackground
 import com.mousikify.core.designsystem.theme.SpotifyCardBackground
@@ -84,10 +110,11 @@ import com.mousikify.core.model.Song
 @Composable
 fun HomeRoute(
     onNavigateToEqualizer: () -> Unit = {},
+    onNavigateToDiagnostics: () -> Unit = {},
     homeResetTrigger: Long = 0L,
     viewModel: HomeViewModel = hiltViewModel()
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     androidx.compose.runtime.LaunchedEffect(homeResetTrigger) {
         if (homeResetTrigger > 0L) {
@@ -108,6 +135,7 @@ fun HomeRoute(
         onIntent = viewModel::onIntent,
         onPickFolder = { folderPicker.launch(null) },
         onNavigateToEqualizer = onNavigateToEqualizer,
+        onNavigateToDiagnostics = onNavigateToDiagnostics,
         homeResetTrigger = homeResetTrigger
     )
 }
@@ -118,6 +146,7 @@ fun HomeScreen(
     onIntent: (HomeIntent) -> Unit,
     onPickFolder: () -> Unit,
     onNavigateToEqualizer: () -> Unit,
+    onNavigateToDiagnostics: () -> Unit = {},
     homeResetTrigger: Long = 0L,
     modifier: Modifier = Modifier
 ) {
@@ -135,15 +164,39 @@ fun HomeScreen(
         onIntent(HomeIntent.CloseDetail)
     }
 
-    if (uiState.activeDetail != null) {
-        HomeDetailScreen(
-            detail = uiState.activeDetail,
-            uiState = uiState,
-            onIntent = onIntent,
-            modifier = modifier
-        )
-    } else {
-        var selectedPill by remember { mutableStateOf("All") }
+    AnimatedContent(
+        targetState = uiState.activeDetail,
+        contentKey = { detail ->
+            when (detail) {
+                null -> "home_root"
+                is HomeDetailView.PlaylistDetail -> "playlist_${detail.playlist.id}"
+                is HomeDetailView.AlbumDetail -> "album_${detail.album.id}"
+                is HomeDetailView.LikedSongsDetail -> "liked_songs"
+                is HomeDetailView.MixDetail -> "mix_${detail.mix.id}"
+            }
+        },
+        transitionSpec = {
+            if (initialState != null && targetState != null) {
+                androidx.compose.animation.EnterTransition.None.togetherWith(androidx.compose.animation.ExitTransition.None)
+            } else if (targetState != null) {
+                (slideInHorizontally(animationSpec = tween(240)) { it / 3 } + fadeIn(animationSpec = tween(200)))
+                    .togetherWith(slideOutHorizontally(animationSpec = tween(200)) { -it / 3 } + fadeOut(animationSpec = tween(160)))
+            } else {
+                (slideInHorizontally(animationSpec = tween(220)) { -it / 3 } + fadeIn(animationSpec = tween(180)))
+                    .togetherWith(slideOutHorizontally(animationSpec = tween(220)) { it / 3 } + fadeOut(animationSpec = tween(180)))
+            }
+        },
+        label = "HomeDetailTransition"
+    ) { currentDetail ->
+        if (currentDetail != null) {
+            HomeDetailScreen(
+                detail = currentDetail,
+                uiState = uiState,
+                onIntent = onIntent,
+                modifier = modifier
+            )
+        } else {
+            var selectedPill by remember { mutableStateOf("All") }
 
         Box(
             modifier = modifier
@@ -186,30 +239,24 @@ fun HomeScreen(
                             )
                         }
 
-                        // Rescan icon button
-                        IconButton(onClick = { onIntent(HomeIntent.Rescan) }) {
-                            if (uiState.isScanning) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(20.dp),
-                                    color = SpotifyGreen,
-                                    strokeWidth = 2.dp
-                                )
-                            } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            // Equalizer button
+                            IconButton(onClick = onNavigateToEqualizer) {
                                 Icon(
-                                    imageVector = Icons.Default.Refresh,
-                                    contentDescription = "Rescan library",
+                                    imageVector = Icons.Default.Equalizer,
+                                    contentDescription = "Equalizer",
                                     tint = SpotifyTextSecondary
                                 )
                             }
-                        }
 
-                        // Equalizer / Settings button
-                        IconButton(onClick = onNavigateToEqualizer) {
-                            Icon(
-                                imageVector = Icons.Default.Equalizer,
-                                contentDescription = "Equalizer",
-                                tint = SpotifyTextSecondary
-                            )
+                            // Diagnostics gear button
+                            IconButton(onClick = onNavigateToDiagnostics) {
+                                Icon(
+                                    imageVector = Icons.Default.Settings,
+                                    contentDescription = "Diagnostics",
+                                    tint = SpotifyTextSecondary
+                                )
+                            }
                         }
                     }
                 }
@@ -471,6 +518,7 @@ fun HomeScreen(
                     TrackListItem(
                         song = song,
                         isPlaying = song.id == uiState.currentSongId && uiState.isPlaying,
+                        isCachedOffline = true,
                         onClick = { onIntent(HomeIntent.PlaySong(song, uiState.forgottenFavorites)) },
                         onFavoriteToggle = { onIntent(HomeIntent.ToggleFavorite(song)) }
                     )
@@ -497,6 +545,7 @@ fun HomeScreen(
         }
     }
     }
+}
 }
 
 @Composable
@@ -1154,133 +1203,257 @@ private fun HomeDetailScreen(
         }
     }
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(SpotifyBackground)
-    ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // Top Bar with Back Button
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(start = 8.dp, top = 12.dp, end = 16.dp, bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = { onIntent(HomeIntent.CloseDetail) }) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint = SpotifyTextPrimary,
-                        modifier = Modifier.size(28.dp)
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var showAddSongsDialog by remember { mutableStateOf(false) }
+    var isEditMode by remember(detail) { mutableStateOf(false) }
+
+    BackHandler(enabled = isEditMode) {
+        isEditMode = false
+    }
+
+    if (showRenameDialog && detail is HomeDetailView.PlaylistDetail) {
+        var newName by remember(detail.playlist.name) { mutableStateOf(detail.playlist.name) }
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            containerColor = SpotifyCardBackground,
+            title = {
+                Text("Rename playlist", color = SpotifyTextPrimary, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                OutlinedTextField(
+                    value = newName,
+                    onValueChange = { newName = it },
+                    placeholder = { Text("Playlist name", color = SpotifyTextSecondary) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = SpotifyGreen,
+                        unfocusedBorderColor = SpotifyTextSecondary,
+                        focusedTextColor = SpotifyTextPrimary,
+                        unfocusedTextColor = SpotifyTextPrimary
+                    )
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (newName.isNotBlank()) {
+                            showRenameDialog = false
+                            onIntent(HomeIntent.RenamePlaylist(detail.playlist.id, newName.trim()))
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
+                    shape = RoundedCornerShape(50)
+                ) {
+                    Text("Save", color = Color.Black, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = false }) {
+                    Text("Cancel", color = SpotifyTextSecondary)
+                }
+            }
+        )
+    }
+
+    if (showAddSongsDialog && detail is HomeDetailView.PlaylistDetail) {
+        AddSongsToPlaylistDialog(
+            playlist = detail.playlist,
+            allSongs = uiState.allSongs,
+            currentPlaylistSongs = detail.songs,
+            onAddSong = { songId -> onIntent(HomeIntent.AddSongToPlaylist(detail.playlist.id, songId)) },
+            onRemoveSong = { songId -> onIntent(HomeIntent.RemoveSongFromPlaylist(detail.playlist.id, songId)) },
+            onDismiss = { showAddSongsDialog = false }
+        )
+    }
+
+    if (showDeleteConfirmDialog && detail is HomeDetailView.PlaylistDetail) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmDialog = false },
+            containerColor = SpotifyCardBackground,
+            title = {
+                Text("Delete Playlist?", color = SpotifyTextPrimary, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Text(
+                    "Are you sure you want to delete \"${detail.playlist.name}\"? This playlist will be removed from your library.",
+                    color = SpotifyTextSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteConfirmDialog = false
+                        onIntent(HomeIntent.DeletePlaylist(detail.playlist.id))
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE22134)),
+                    shape = RoundedCornerShape(50)
+                ) {
+                    Text("Delete", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmDialog = false }) {
+                    Text("Cancel", color = SpotifyTextPrimary)
+                }
+            }
+        )
+    }
+
+    MediaDetailView(
+        title = title,
+        subtitle = subtitle,
+        songs = songs,
+        headerArtwork = headerArtwork,
+        currentSongId = uiState.currentSongId,
+        isPlaying = uiState.isPlaying,
+        isShuffleEnabled = uiState.isShuffleEnabled,
+        onBack = {
+            if (isEditMode) {
+                isEditMode = false
+            } else {
+                onIntent(HomeIntent.CloseDetail)
+            }
+        },
+        onPlaySong = { song, _ -> onIntent(HomeIntent.PlaySong(song, songs)) },
+        onPlayAll = { onIntent(HomeIntent.PlayAll(songs, 0)) },
+        onToggleShuffle = { onIntent(HomeIntent.ToggleShuffle(songs)) },
+        onToggleFavorite = { onIntent(HomeIntent.ToggleFavorite(it)) },
+        modifier = modifier,
+        topBarActions = {
+            if (detail is HomeDetailView.PlaylistDetail) {
+                TextButton(onClick = { isEditMode = !isEditMode }) {
+                    Text(
+                        text = if (isEditMode) "Done" else "Edit",
+                        color = if (isEditMode) SpotifyGreen else SpotifyTextPrimary,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
                     )
                 }
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 140.dp)
-            ) {
-                // Header section
-                item {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 12.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        headerArtwork()
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = title,
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = SpotifyTextPrimary,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = subtitle,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = SpotifyTextSecondary,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // Action Bar: Shuffle + Big Play Button
-                        if (songs.isNotEmpty()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                IconButton(
-                                    onClick = { onIntent(HomeIntent.ToggleShuffle(songs)) }
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Shuffle,
-                                        contentDescription = "Shuffle",
-                                        tint = if (uiState.isShuffleEnabled) SpotifyGreen else Color(0xFF888888),
-                                        modifier = Modifier.size(28.dp)
-                                    )
-                                }
-
-                                IconButton(
-                                    onClick = { onIntent(HomeIntent.PlayAll(songs, 0)) },
-                                    modifier = Modifier
-                                        .size(56.dp)
-                                        .clip(CircleShape)
-                                        .background(SpotifyGreen)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.PlayArrow,
-                                        contentDescription = "Play all",
-                                        tint = Color.Black,
-                                        modifier = Modifier.size(36.dp)
-                                    )
-                                }
-                            }
+                AnimatedVisibility(
+                    visible = isEditMode,
+                    enter = fadeIn(animationSpec = tween(180)) + expandHorizontally(),
+                    exit = fadeOut(animationSpec = tween(150)) + shrinkHorizontally()
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { showRenameDialog = true }) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = "Rename Playlist",
+                                tint = SpotifyTextSecondary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        IconButton(onClick = { showDeleteConfirmDialog = true }) {
+                            Icon(
+                                imageVector = Icons.Default.DeleteOutline,
+                                contentDescription = "Delete Playlist",
+                                tint = Color(0xFFE22134),
+                                modifier = Modifier.size(24.dp)
+                            )
                         }
                     }
                 }
-
-                // Song list
-                if (songs.isEmpty()) {
-                    item {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 40.dp),
-                            contentAlignment = Alignment.Center
+            }
+        },
+        actionBarActions = {
+            if (detail is HomeDetailView.PlaylistDetail) {
+                Spacer(modifier = Modifier.width(8.dp))
+                OutlinedButton(
+                    onClick = { showAddSongsDialog = true },
+                    shape = RoundedCornerShape(50),
+                    border = BorderStroke(1.dp, SpotifyTextSecondary.copy(alpha = 0.4f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = SpotifyTextPrimary),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = null,
+                        tint = SpotifyGreen,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Add songs", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                }
+                AnimatedVisibility(
+                    visible = isEditMode,
+                    enter = fadeIn(animationSpec = tween(180)) + expandHorizontally(),
+                    exit = fadeOut(animationSpec = tween(150)) + shrinkHorizontally()
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        OutlinedButton(
+                            onClick = { showRenameDialog = true },
+                            shape = RoundedCornerShape(50),
+                            border = BorderStroke(1.dp, SpotifyTextSecondary.copy(alpha = 0.4f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = SpotifyTextPrimary),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                         ) {
-                            Text("No songs in this collection", color = SpotifyTextSecondary)
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = null,
+                                tint = SpotifyTextSecondary,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Rename", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
-                } else {
-                    items(songs, key = { it.id }) { song ->
-                        TrackListItem(
-                            song = song,
-                            isPlaying = song.id == uiState.currentSongId && uiState.isPlaying,
-                            onClick = { onIntent(HomeIntent.PlaySong(song, songs)) },
-                            onFavoriteToggle = { onIntent(HomeIntent.ToggleFavorite(song)) }
+                }
+            }
+        },
+        emptyContent = {
+            if (detail is HomeDetailView.PlaylistDetail) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 36.dp, horizontal = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("This playlist is empty", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = SpotifyTextPrimary)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = { showAddSongsDialog = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
+                        shape = RoundedCornerShape(50)
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, tint = Color.Black, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Add songs", color = Color.Black, fontWeight = FontWeight.Bold)
+                    }
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 40.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("No songs in this collection", color = SpotifyTextSecondary)
+                }
+            }
+        },
+        songTrailingContent = { song ->
+            if (detail is HomeDetailView.PlaylistDetail) {
+                AnimatedVisibility(
+                    visible = isEditMode,
+                    enter = fadeIn(animationSpec = tween(150)) + expandHorizontally(),
+                    exit = fadeOut(animationSpec = tween(150)) + shrinkHorizontally()
+                ) {
+                    IconButton(
+                        onClick = { onIntent(HomeIntent.RemoveSongFromPlaylist(detail.playlist.id, song.id)) },
+                        modifier = Modifier.padding(end = 4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Remove from playlist",
+                            tint = Color(0xFFE22134),
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
             }
         }
-    }
+    )
 }
+

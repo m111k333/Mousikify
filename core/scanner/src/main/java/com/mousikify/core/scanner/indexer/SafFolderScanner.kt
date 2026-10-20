@@ -13,6 +13,7 @@ import com.mousikify.core.scanner.artwork.ArtworkExtractor
 import com.mousikify.core.scanner.dedup.SongDeduplicator
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -64,7 +65,6 @@ class SafFolderScanner @Inject constructor(
         // 1. Upsert new songs to library
         if (songsToUpsert.isNotEmpty()) {
             songDao.upsertSongs(songsToUpsert)
-            com.mousikify.core.scanner.work.AudioAnalysisWorker.enqueue(context)
         }
 
         // 2. Automatically create or update playlist with the folder name
@@ -98,7 +98,7 @@ class SafFolderScanner @Inject constructor(
         )
     }
 
-    private fun traverseDirectory(
+    private suspend fun traverseDirectory(
         dir: DocumentFile,
         folderPath: String,
         existingRecords: MutableList<SongDedupRecord>,
@@ -108,6 +108,7 @@ class SafFolderScanner @Inject constructor(
     ) {
         val files = dir.listFiles()
         for (file in files) {
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
             if (file.isDirectory) {
                 val subPath = "$folderPath/${file.name ?: "subfolder"}"
                 traverseDirectory(file, subPath, existingRecords, songsToUpsert, allFolderSongIds, onArtworkFound)

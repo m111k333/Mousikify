@@ -7,21 +7,27 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.HttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import com.mousikify.core.media.cache.MediaCacheManager
 import com.mousikify.core.media.dsp.AudioEffectController
-import com.mousikify.core.media.dsp.EqualizerAudioProcessor
 import com.mousikify.core.media.queue.QueueManager
+import com.mousikify.core.media.remote.RemoteMusicRepository
 import com.mousikify.core.model.Song
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import com.mousikify.core.media.diagnostics.DiagnosticsLog
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -30,13 +36,14 @@ import kotlin.math.sin
 class CrossfadePlayerWrapper(
     private val context: Context,
     private val queueManager: QueueManager,
-    val audioProcessorA: EqualizerAudioProcessor,
-    val audioProcessorB: EqualizerAudioProcessor,
-    val audioEffectController: AudioEffectController
+    private val cacheManager: MediaCacheManager,
+    private val remoteMusicRepository: RemoteMusicRepository,
+    val audioEffectController: AudioEffectController,
+    private val diagnosticsLog: DiagnosticsLog? = null
 ) {
 
-    val playerA: ExoPlayer = createExoPlayer(context, audioProcessorA)
-    val playerB: ExoPlayer = createExoPlayer(context, audioProcessorB)
+    val playerA: ExoPlayer = createExoPlayer(context.applicationContext, cacheManager)
+    val playerB: ExoPlayer = createExoPlayer(context.applicationContext, cacheManager)
 
     var activePlayer: ExoPlayer = playerA
         private set
@@ -46,10 +53,13 @@ class CrossfadePlayerWrapper(
     private val scope = CoroutineScope(Dispatchers.Main)
     private var crossfadeMonitorJob: Job? = null
     private var crossfadeTransitionJob: Job? = null
+    private val playerListeners = mutableMapOf<ExoPlayer, Player.Listener>()
+    private val retriedVideoIds = mutableSetOf<String>()
 
     var crossfadeDurationMs: Int = 3000
     var onPlayerSwapped: ((ExoPlayer) -> Unit)? = null
     var onSongTransition: ((Song) -> Unit)? = null
+    var onTrackEnded: ((Song) -> Unit)? = null
 
     init {
         setupPlayer(playerA)
@@ -64,9 +74,10 @@ class CrossfadePlayerWrapper(
             .build()
         player.setAudioAttributes(audioAttributes, true)
         player.setHandleAudioBecomingNoisy(true)
-        player.setWakeMode(C.WAKE_MODE_LOCAL)
+        // Hold both CPU and Wi-Fi low-latency wake locks during progressive streaming
+        player.setWakeMode(C.WAKE_MODE_NETWORK)
 
-        player.addListener(object : Player.Listener {
+        val listener = object : Player.Listener {
             override fun onAudioSessionIdChanged(audioSessionId: Int) {
                 if (player == activePlayer && audioSessionId > 0) {
                     audioEffectController.attachAudioSession(audioSessionId)
@@ -78,6 +89,51 @@ class CrossfadePlayerWrapper(
                     if (player.audioSessionId > 0) {
                         audioEffectController.attachAudioSession(player.audioSessionId)
                     }
+                    // Clear retry state once playback succeeds
+                    queueManager.currentSong.value?.remoteVideoId?.let { retriedVideoIds.remove(it) }
+                }
+                if (player == activePlayer && playbackState == Player.STATE_ENDED) {
+                    if (!queueManager.isCrossfading.value) {
+                        val next = queueManager.getNextSong()
+                        if (next != null) {
+                            onTrackEnded?.invoke(next)
+                        }
+                    }
+                }
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                diagnosticsLog?.error(
+                    "ExoPlayer",
+                    "Playback error: ${error.errorCodeName} (${error.errorCode})",
+                    error.message
+                )
+                if (player != activePlayer) {
+                    if (queueManager.isCrossfading.value) {
+                        cancelCrossfade()
+                    }
+                    return
+                }
+                val currentSong = queueManager.currentSong.value ?: return
+                val videoId = currentSong.remoteVideoId ?: return
+
+                // Automatic recovery if YouTube stream URL expired or IP changed (HTTP 403 / network handoff)
+                val cause = error.cause
+                val isHttp403 = (cause is HttpDataSource.InvalidResponseCodeException && cause.responseCode == 403)
+                if (isHttp403) {
+                    diagnosticsLog?.warn(
+                        "ExoPlayer",
+                        "HTTP 403 on stream URL for $videoId. Invalidating cached URL and retrying"
+                    )
+                }
+                if ((isHttp403 || error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS) &&
+                    retriedVideoIds.add(videoId)
+                ) {
+                    remoteMusicRepository.invalidateStreamUrl(videoId)
+                    val resumePosition = player.currentPosition.coerceAtLeast(0L)
+                    player.seekTo(resumePosition)
+                    player.prepare()
+                    player.play()
                 }
             }
 
@@ -89,7 +145,9 @@ class CrossfadePlayerWrapper(
                     }
                 }
             }
-        })
+        }
+        playerListeners[player] = listener
+        player.addListener(listener)
     }
 
     private fun startPositionMonitor() {
@@ -117,24 +175,32 @@ class CrossfadePlayerWrapper(
     }
 
     private fun launchCrossfade(nextSong: Song, remainingMs: Long) {
+        // ytm:// is resolved (downloaded file / stream with headers / offline cache) by the ResolvingDataSource
+        val targetUri = Uri.parse(nextSong.contentUri)
+
         queueManager.setCrossfading(true)
+
+        val artBytes = cacheManager.getArtworkBytes(nextSong)
+        val artUri = cacheManager.resolveArtworkUri(nextSong)
 
         val metadata = MediaMetadata.Builder()
             .setTitle(nextSong.title)
             .setArtist(nextSong.artistName)
             .setAlbumTitle(nextSong.albumName)
-            .setArtworkUri(
-                if (!nextSong.artworkUri.isNullOrBlank()) {
-                    Uri.parse(nextSong.artworkUri)
-                } else {
-                    Uri.parse("content://media/external/audio/albumart/${nextSong.albumId}")
+            .apply {
+                if (artBytes != null) {
+                    setArtworkData(artBytes, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
                 }
-            )
+                if (artUri != Uri.EMPTY) {
+                    setArtworkUri(artUri)
+                }
+            }
             .build()
 
         val mediaItem = MediaItem.Builder()
             .setMediaId(nextSong.id.toString())
-            .setUri(Uri.parse(nextSong.contentUri))
+            .setUri(targetUri)
+            .setCustomCacheKey(nextSong.cacheKey)
             .setMediaMetadata(metadata)
             .build()
 
@@ -142,13 +208,6 @@ class CrossfadePlayerWrapper(
         standbyPlayer.volume = 0f
         standbyPlayer.prepare()
         standbyPlayer.play()
-
-        // Apply ReplayGain
-        if (standbyPlayer == playerA) {
-            audioProcessorA.setReplayGain(nextSong.replayGainDb)
-        } else {
-            audioProcessorB.setReplayGain(nextSong.replayGainDb)
-        }
 
         crossfadeTransitionJob?.cancel()
         crossfadeTransitionJob = scope.launch {
@@ -180,15 +239,15 @@ class CrossfadePlayerWrapper(
 
             queueManager.getNextSong() // Advance queue to nextSong
 
-            outgoing.stop()
-            outgoing.volume = 1.0f
-            incoming.volume = 1.0f
-
             activePlayer = incoming
             standbyPlayer = outgoing
 
             queueManager.setCrossfading(false)
             onPlayerSwapped?.invoke(activePlayer)
+            outgoing.stop()
+            outgoing.volume = 1.0f
+            incoming.volume = 1.0f
+
             audioEffectController.attachAudioSession(activePlayer.audioSessionId)
             onSongTransition?.invoke(nextSong)
         }
@@ -203,27 +262,43 @@ class CrossfadePlayerWrapper(
     }
 
     fun releasePlayers() {
+        scope.cancel()
         crossfadeMonitorJob?.cancel()
         crossfadeTransitionJob?.cancel()
         audioEffectController.release()
+        playerListeners.forEach { (player, listener) ->
+            try { player.removeListener(listener) } catch (_: Exception) {}
+        }
+        playerListeners.clear()
         playerA.release()
         playerB.release()
     }
 
     companion object {
-        private fun createExoPlayer(context: Context, processor: EqualizerAudioProcessor): ExoPlayer {
-            val renderersFactory = object : DefaultRenderersFactory(context) {
-                override fun buildAudioSink(
-                    context: Context,
-                    enableFloatOutput: Boolean,
-                    enableAudioTrackPlaybackParams: Boolean
-                ): androidx.media3.exoplayer.audio.AudioSink {
-                    return DefaultAudioSink.Builder(context)
-                        .setAudioProcessors(arrayOf(processor))
-                        .build()
-                }
-            }
-            return ExoPlayer.Builder(context, renderersFactory).build()
+        private fun createExoPlayer(
+            context: Context,
+            cacheManager: MediaCacheManager
+        ): ExoPlayer {
+            val renderersFactory = DefaultRenderersFactory(context)
+
+            // Progressive playback LoadControl: starts decoding after just 250ms of audio buffer!
+            val loadControl = DefaultLoadControl.Builder()
+                .setBufferDurationsMs(
+                    /* minBufferMs = */ 2_500,
+                    /* maxBufferMs = */ 60_000,
+                    /* bufferForPlaybackMs = */ 250,
+                    /* bufferForPlaybackAfterRebufferMs = */ 800
+                )
+                .setPrioritizeTimeOverSizeThresholds(true)
+                .build()
+
+            val mediaSourceFactory = DefaultMediaSourceFactory(context)
+                .setDataSourceFactory(cacheManager.resolvingDataSourceFactory)
+
+            return ExoPlayer.Builder(context, renderersFactory)
+                .setMediaSourceFactory(mediaSourceFactory)
+                .setLoadControl(loadControl)
+                .build()
         }
     }
 }

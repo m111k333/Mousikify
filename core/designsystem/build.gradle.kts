@@ -51,5 +51,8 @@ dependencies {
     implementation(libs.androidx.palette.ktx)
     implementation(libs.coil.compose)
 
+    // Lifecycle Compose (collectAsStateWithLifecycle)
+    api(libs.androidx.lifecycle.runtime.compose)
+
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

@@ -1,7 +1,6 @@
 package com.mousikify.core.scanner.tag
 
 import android.content.Context
-import android.media.MediaMetadataRetriever
 import android.net.Uri
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
@@ -60,22 +59,6 @@ object TagExtractor {
                 } catch (_: Exception) {
                     // Fallback to MediaMetadataRetriever
                 }
-            }
-        }
-
-        // 3. Fallback to MediaMetadataRetriever if needed
-        if (embeddedLyrics == null) {
-            val retriever = MediaMetadataRetriever()
-            try {
-                if (!filePath.isNullOrBlank() && File(filePath).exists()) {
-                    retriever.setDataSource(filePath)
-                } else {
-                    retriever.setDataSource(context, contentUri)
-                }
-                // MediaMetadataRetriever doesn't have a direct key for lyrics, but some devices report in metadata
-            } catch (_: Exception) {
-            } finally {
-                try { retriever.release() } catch (_: Exception) {}
             }
         }
 

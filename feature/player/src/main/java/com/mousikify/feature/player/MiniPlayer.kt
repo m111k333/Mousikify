@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -36,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.mousikify.core.designsystem.component.MarqueeText
+import com.mousikify.core.designsystem.component.TrackSourceBadge
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -58,6 +60,8 @@ import kotlin.math.roundToInt
 fun MiniPlayer(
     song: Song?,
     isPlaying: Boolean,
+    isBuffering: Boolean = false,
+    isCachedOffline: Boolean = false,
     progressFraction: Float,
     onClick: () -> Unit,
     onPlayPauseClick: () -> Unit,
@@ -138,7 +142,7 @@ fun MiniPlayer(
 
             Spacer(modifier = Modifier.width(10.dp))
 
-            // Title & Artist on one single row with dot separator (Spotify style)
+            // Title & Artist with Source Badge
             Column(
                 modifier = Modifier.weight(1f)
             ) {
@@ -149,13 +153,20 @@ fun MiniPlayer(
                         color = SpotifyTextPrimary
                     )
                 )
-                Text(
-                    text = song.artistName,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = SpotifyTextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TrackSourceBadge(
+                        isLocal = song.isLocal,
+                        isCachedOffline = isCachedOffline,
+                        modifier = Modifier.padding(end = 5.dp)
+                    )
+                    Text(
+                        text = song.artistName,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SpotifyTextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
 
             // Favorite heart
@@ -168,14 +179,22 @@ fun MiniPlayer(
                 )
             }
 
-            // Play / Pause button
+            // Play / Pause button (or Buffering spinner)
             IconButton(onClick = onPlayPauseClick) {
-                Icon(
-                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = if (isPlaying) "Pause" else "Play",
-                    tint = SpotifyTextPrimary,
-                    modifier = Modifier.size(28.dp)
-                )
+                if (isBuffering) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(22.dp),
+                        color = SpotifyGreen,
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Icon(
+                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (isPlaying) "Pause" else "Play",
+                        tint = SpotifyTextPrimary,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
             }
         }
 

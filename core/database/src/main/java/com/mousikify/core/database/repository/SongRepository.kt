@@ -113,11 +113,26 @@ class SongRepository @Inject constructor(
         songDao.updateArtworkUri(songId, artworkUri)
     }
 
+    suspend fun updateLrcPath(songId: Long, lrcPath: String) {
+        songDao.updateLrcPath(songId, lrcPath)
+    }
+
     suspend fun upsertSongs(songs: List<Song>) {
         songDao.upsertSongs(songs.map { it.toEntity() })
     }
 
     suspend fun deleteSongs(ids: List<Long>) {
         songDao.deleteSongsByIds(ids)
+    }
+
+    suspend fun deleteNonFavoriteRemoteSongs() {
+        songDao.deleteNonFavoriteRemoteSongs()
+    }
+
+    suspend fun getPinnedRemoteVideoIds(): Set<String> {
+        return songDao.getPinnedRemoteContentUris()
+            .map { it.removePrefix("ytm://").substringBefore("?").trim() }
+            .filter { it.isNotEmpty() }
+            .toSet()
     }
 }

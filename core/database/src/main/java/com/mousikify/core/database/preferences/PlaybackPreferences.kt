@@ -40,9 +40,29 @@ class PlaybackPreferences @Inject constructor(
         val REVERB_PRESET = intPreferencesKey("reverb_preset")
         val EQ_BAND_LEVELS = stringPreferencesKey("eq_band_levels")
         val CUSTOM_FOLDER_URIS = stringSetPreferencesKey("custom_folder_uris")
+        val RECENT_SEARCH_QUERIES = stringPreferencesKey("recent_search_queries")
+        val RECENT_CACHED_VIDEO_IDS = stringPreferencesKey("recent_cached_video_ids")
+    }
+
+    companion object {
+        private const val ENTRY_DELIMITER = "\u001F"
+        const val MAX_RECENT_SEARCHES = 10
+        const val MAX_CACHED_SONGS = 20
     }
 
     val customFolderUris: Flow<Set<String>> = dataStore.data.map { it[PreferencesKeys.CUSTOM_FOLDER_URIS] ?: emptySet() }
+
+    val recentSearchQueries: Flow<List<String>> = dataStore.data.map { prefs ->
+        val raw = prefs[PreferencesKeys.RECENT_SEARCH_QUERIES].orEmpty()
+        if (raw.isBlank()) emptyList()
+        else raw.split(ENTRY_DELIMITER).map { it.trim() }.filter { it.isNotEmpty() }.take(MAX_RECENT_SEARCHES)
+    }
+
+    val recentCachedVideoIds: Flow<List<String>> = dataStore.data.map { prefs ->
+        val raw = prefs[PreferencesKeys.RECENT_CACHED_VIDEO_IDS].orEmpty()
+        if (raw.isBlank()) emptyList()
+        else raw.split(ENTRY_DELIMITER).map { it.trim() }.filter { it.isNotEmpty() }
+    }
 
     val lastPlayedSongId: Flow<Long?> = dataStore.data.map { it[PreferencesKeys.LAST_PLAYED_SONG_ID] }
     val lastPlayedPositionMs: Flow<Long> = dataStore.data.map { it[PreferencesKeys.LAST_PLAYED_POSITION_MS] ?: 0L }
@@ -135,5 +155,58 @@ class PlaybackPreferences @Inject constructor(
             val current = it[PreferencesKeys.CUSTOM_FOLDER_URIS] ?: emptySet()
             it[PreferencesKeys.CUSTOM_FOLDER_URIS] = current - uriString
         }
+    }
+
+    suspend fun addRecentSearchQuery(query: String) {
+        val cleaned = query.trim().replace(ENTRY_DELIMITER, " ")
+        if (cleaned.isEmpty()) return
+        dataStore.edit { prefs ->
+            val current = prefs[PreferencesKeys.RECENT_SEARCH_QUERIES]
+                .orEmpty()
+                .split(ENTRY_DELIMITER)
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && !it.equals(cleaned, ignoreCase = true) }
+            val updated = (listOf(cleaned) + current).take(MAX_RECENT_SEARCHES)
+            prefs[PreferencesKeys.RECENT_SEARCH_QUERIES] = updated.joinToString(ENTRY_DELIMITER)
+        }
+    }
+
+    suspend fun removeRecentSearchQuery(query: String) {
+        val cleaned = query.trim()
+        dataStore.edit { prefs ->
+            val current = prefs[PreferencesKeys.RECENT_SEARCH_QUERIES]
+                .orEmpty()
+                .split(ENTRY_DELIMITER)
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && !it.equals(cleaned, ignoreCase = true) }
+            prefs[PreferencesKeys.RECENT_SEARCH_QUERIES] = current.joinToString(ENTRY_DELIMITER)
+        }
+    }
+
+    suspend fun clearRecentSearchQueries() {
+        dataStore.edit { prefs ->
+            prefs.remove(PreferencesKeys.RECENT_SEARCH_QUERIES)
+        }
+    }
+
+    suspend fun recordPlayedVideoIdAndGetEvicted(
+        videoId: String,
+        maxCachedSongs: Int = MAX_CACHED_SONGS
+    ): List<String> {
+        val cleanId = videoId.removePrefix("ytm://").substringBefore("?").trim()
+        if (cleanId.isEmpty()) return emptyList()
+        var evicted = emptyList<String>()
+        dataStore.edit { prefs ->
+            val current = prefs[PreferencesKeys.RECENT_CACHED_VIDEO_IDS]
+                .orEmpty()
+                .split(ENTRY_DELIMITER)
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && it != cleanId }
+            val combined = listOf(cleanId) + current
+            val retained = combined.take(maxCachedSongs)
+            evicted = combined.drop(maxCachedSongs)
+            prefs[PreferencesKeys.RECENT_CACHED_VIDEO_IDS] = retained.joinToString(ENTRY_DELIMITER)
+        }
+        return evicted
     }
 }

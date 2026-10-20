@@ -20,4 +20,16 @@ data class Song(
     val lrcPath: String? = null,
     val replayGainDb: Float? = null,
     val artworkUri: String? = null
-)
+) {
+    val isRemoteStream: Boolean
+        get() = contentUri.startsWith("ytm://", ignoreCase = true)
+
+    val isLocal: Boolean
+        get() = !isRemoteStream
+
+    val remoteVideoId: String?
+        get() = if (isRemoteStream) contentUri.removePrefix("ytm://").substringBefore("?") else null
+
+    val cacheKey: String
+        get() = remoteVideoId ?: id.toString()
+}

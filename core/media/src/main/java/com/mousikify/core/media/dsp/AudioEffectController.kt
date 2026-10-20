@@ -87,6 +87,10 @@ class AudioEffectController {
         }
     }
 
+    companion object {
+        val BAND_FREQUENCIES = intArrayOf(31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000)
+    }
+
     private fun applyBandLevelsToEqualizer(eq: Equalizer) {
         try {
             val numBands = eq.numberOfBands.toInt()
@@ -94,8 +98,8 @@ class AudioEffectController {
             val maxRange = eq.bandLevelRange[1]
             for (band in 0 until numBands) {
                 val centerFreqHz = eq.getCenterFreq(band.toShort()) / 1000
-                val closestIndex = EqualizerAudioProcessor.BAND_FREQUENCIES.indices.minByOrNull {
-                    kotlin.math.abs(EqualizerAudioProcessor.BAND_FREQUENCIES[it] - centerFreqHz)
+                val closestIndex = BAND_FREQUENCIES.indices.minByOrNull {
+                    kotlin.math.abs(BAND_FREQUENCIES[it] - centerFreqHz)
                 } ?: 0
                 val targetMb = bandLevels.getOrElse(closestIndex) { 0 }
                 val clamped = targetMb.coerceIn(minRange.toInt(), maxRange.toInt()).toShort()

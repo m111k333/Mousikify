@@ -4,6 +4,7 @@ import com.mousikify.core.database.dao.PlaylistDao
 import com.mousikify.core.database.dao.SongDao
 import com.mousikify.core.database.entity.PlaylistEntity
 import com.mousikify.core.database.entity.SongEntity
+import com.mousikify.core.database.entity.toEntity
 import com.mousikify.core.model.Playlist
 import com.mousikify.core.model.Song
 import kotlinx.coroutines.flow.Flow
@@ -59,6 +60,13 @@ class PlaylistRepository @Inject constructor(
         playlistDao.deletePlaylist(playlistId)
     }
 
+    suspend fun renamePlaylist(playlistId: Long, newName: String) {
+        val trimmed = newName.trim()
+        if (trimmed.isEmpty()) return
+        val existing = playlistDao.getPlaylistByIdSync(playlistId) ?: return
+        playlistDao.updatePlaylist(existing.copy(name = trimmed))
+    }
+
     suspend fun addSongToPlaylist(playlistId: Long, songId: Long) {
         playlistDao.addSongToEndOfPlaylist(playlistId, songId)
         val playlist = playlistDao.getPlaylistByIdSync(playlistId)
@@ -68,6 +76,19 @@ class PlaylistRepository @Inject constructor(
                 playlistDao.updatePlaylist(playlist.copy(customCoverUri = song.artworkUri))
             }
         }
+    }
+
+    suspend fun addSongObjectToPlaylist(playlistId: Long, song: Song) {
+        if (song.isRemoteStream) {
+            val existing = songDao.getSongByIdSync(song.id)
+            val entity = song.toEntity().copy(
+                isFavorite = existing?.isFavorite ?: song.isFavorite,
+                playCount = existing?.playCount ?: song.playCount,
+                lastPlayedAt = existing?.lastPlayedAt ?: song.lastPlayedAt
+            )
+            songDao.upsertSongs(listOf(entity))
+        }
+        addSongToPlaylist(playlistId, song.id)
     }
 
     suspend fun isSongInPlaylist(playlistId: Long, songId: Long): Boolean {

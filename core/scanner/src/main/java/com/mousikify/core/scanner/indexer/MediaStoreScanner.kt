@@ -15,6 +15,7 @@ import com.mousikify.core.scanner.dedup.SongDeduplicator
 import com.mousikify.core.scanner.tag.TagExtractor
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -30,6 +31,9 @@ class MediaStoreScanner @Inject constructor(
 ) {
 
     suspend fun scanMediaStore(): ScanResult = withContext(Dispatchers.IO) {
+        try {
+            songDao.deleteNonFavoriteRemoteSongs()
+        } catch (_: Exception) {}
         val cachedMap = songDao.getAllMediaIdsAndModifiedDates().associate { it.id to it.dateModified }
         val existingRecords = songDao.getAllDedupRecords().toMutableList()
 
@@ -83,6 +87,7 @@ class MediaStoreScanner @Inject constructor(
                 val dateModifiedColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_MODIFIED)
 
                 while (cursor.moveToNext()) {
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
                     val id = cursor.getLong(idColumn)
                     activeMediaIds.add(id)
 
@@ -148,6 +153,9 @@ class MediaStoreScanner @Inject constructor(
                         }
 
                         val extended = TagExtractor.extract(context, filePath, Uri.parse(contentUri))
+                        val resolvedLrcPath = extended.lrcPath ?: extended.embeddedLyrics?.let {
+                            com.mousikify.core.scanner.lyrics.OfflineLyricsExtractor.cacheEmbeddedLyricsToFile(context, id, it)
+                        }
 
                         // Extract embedded or sidecar artwork
                         val artworkUri = ArtworkExtractor.extractArtwork(
@@ -172,7 +180,7 @@ class MediaStoreScanner @Inject constructor(
                             folderPath = folderPath,
                             dateAdded = dateAdded,
                             dateModified = dateModified,
-                            lrcPath = extended.lrcPath,
+                            lrcPath = resolvedLrcPath,
                             replayGainDb = extended.replayGainDb,
                             artworkUri = artworkUri
                         )
@@ -196,26 +204,10 @@ class MediaStoreScanner @Inject constructor(
             e.printStackTrace()
         }
 
-        // Retroactively extract artwork for any songs missing artwork
-        try {
-            val songsWithoutArt = songDao.getSongsWithoutArtwork()
-            for (song in songsWithoutArt) {
-                val art = ArtworkExtractor.extractArtwork(
-                    context = context,
-                    songId = song.id,
-                    albumId = song.albumId,
-                    contentUri = Uri.parse(song.contentUri),
-                    filePath = null
-                )
-                if (!art.isNullOrBlank()) {
-                    songDao.updateArtworkUri(song.id, art)
-                }
-            }
-        } catch (_: Exception) {}
 
-        // Identify deleted tracks (excluding SAF tracks which have 0x4000000000000000L flag)
+        // Identify deleted tracks (excluding SAF tracks which have 0x4000000000000000L flag, and remote stream tracks which have id < 0)
         val staleIds = cachedMap.keys.filter { id ->
-            (id and 0x4000000000000000L) == 0L && !activeMediaIds.contains(id)
+            id > 0L && (id and 0x4000000000000000L) == 0L && !activeMediaIds.contains(id)
         }
 
         if (songsToUpsert.isNotEmpty()) {

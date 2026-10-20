@@ -9,9 +9,6 @@ import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 class SpotifyWidgetProvider : AppWidgetProvider() {
 
@@ -27,8 +24,6 @@ class SpotifyWidgetProvider : AppWidgetProvider() {
         const val ACTION_SKIP_PREV = "com.mousikify.widget.ACTION_SKIP_PREV"
         const val ACTION_TOGGLE_FAVORITE = "com.mousikify.widget.ACTION_TOGGLE_FAVORITE"
     }
-
-    private val providerScope = CoroutineScope(Dispatchers.Main)
 
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)

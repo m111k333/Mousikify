@@ -46,8 +46,23 @@ dependencies {
     implementation(libs.androidx.media3.session)
     implementation(libs.androidx.media3.common)
     implementation(libs.androidx.media3.ui)
+    implementation(libs.androidx.media3.datasource)
+    implementation(libs.androidx.media3.datasource.okhttp)
+    implementation(libs.androidx.media3.database)
+
+    // Network & Extractor
+    api(libs.okhttp)
+    implementation(libs.newpipe.extractor)
+
+    // JAudioTagger
+    implementation(libs.jaudiotagger)
+
+    // Paging 3
+    api(libs.androidx.paging.runtime)
 
     // Hilt
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
+
+    testImplementation(libs.junit)
 }

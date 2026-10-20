@@ -22,9 +22,6 @@ data class PlaylistWithCount(
 @Dao
 interface PlaylistDao {
 
-    @Query("SELECT * FROM playlists ORDER BY createdAt DESC")
-    fun getAllPlaylists(): Flow<List<PlaylistEntity>>
-
     @Query("""
         SELECT p.playlistId, p.name, p.createdAt, p.customCoverUri, COUNT(ps.songId) as songCount
         FROM playlists p

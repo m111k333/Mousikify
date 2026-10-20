@@ -4,11 +4,18 @@ import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -29,6 +36,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -38,6 +46,8 @@ import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Folder
@@ -92,6 +102,11 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil3.compose.AsyncImage
+import com.mousikify.core.designsystem.component.AddSongsToPlaylistDialog
+import com.mousikify.core.designsystem.component.AddToPlaylistDialog
+import com.mousikify.core.designsystem.component.CreatePlaylistDialog
+import com.mousikify.core.designsystem.component.MediaDetailView
+import com.mousikify.core.designsystem.component.TrackListItem
 import com.mousikify.core.designsystem.theme.SpotifyBackground
 import com.mousikify.core.designsystem.theme.SpotifyCardBackground
 import com.mousikify.core.designsystem.theme.SpotifyGreen
@@ -138,22 +153,48 @@ fun LibraryScreen(
     }
 
     var showPlusMenu by remember { mutableStateOf(false) }
+    var showSortMenu by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
 
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(SpotifyBackground)
     ) {
-        if (uiState.activeDetail != null) {
-            SpotifyDetailScreen(
-                detail = uiState.activeDetail,
-                uiState = uiState,
-                onIntent = onIntent,
-                modifier = Modifier.fillMaxSize()
-            )
-        } else {
-            Column(modifier = Modifier.fillMaxSize()) {
-            // Spotify Header: "Your Library" with Search, Plus, & Rescan
+        AnimatedContent(
+            targetState = uiState.activeDetail,
+            contentKey = { detail ->
+                when (detail) {
+                    null -> "library_root"
+                    is LibraryDetailView.PlaylistDetail -> "playlist_${detail.playlist.id}"
+                    is LibraryDetailView.ArtistDetail -> "artist_${detail.artist.name}"
+                    is LibraryDetailView.AlbumDetail -> "album_${detail.album.id}"
+                    is LibraryDetailView.FolderDetail -> "folder_${detail.folder.path}"
+                }
+            },
+            transitionSpec = {
+                if (initialState != null && targetState != null) {
+                    androidx.compose.animation.EnterTransition.None.togetherWith(androidx.compose.animation.ExitTransition.None)
+                } else if (targetState != null) {
+                    (slideInHorizontally(animationSpec = tween(240)) { it / 3 } + fadeIn(animationSpec = tween(200)))
+                        .togetherWith(slideOutHorizontally(animationSpec = tween(200)) { -it / 3 } + fadeOut(animationSpec = tween(160)))
+                } else {
+                    (slideInHorizontally(animationSpec = tween(220)) { -it / 3 } + fadeIn(animationSpec = tween(180)))
+                        .togetherWith(slideOutHorizontally(animationSpec = tween(220)) { it / 3 } + fadeOut(animationSpec = tween(180)))
+                }
+            },
+            label = "LibraryDetailTransition"
+        ) { currentDetail ->
+            if (currentDetail != null) {
+                SpotifyDetailScreen(
+                    detail = currentDetail,
+                    uiState = uiState,
+                    onIntent = onIntent,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Column(modifier = Modifier.fillMaxSize()) {
+            // Spotify Header: "Your Library" with Search & Plus
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -167,22 +208,6 @@ fun LibraryScreen(
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f)
                 )
-
-                IconButton(onClick = { onIntent(LibraryIntent.RescanLibrary) }) {
-                    if (uiState.isScanning) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            color = SpotifyGreen,
-                            strokeWidth = 2.dp
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "Rescan library",
-                            tint = SpotifyTextPrimary
-                        )
-                    }
-                }
 
                 Box {
                     IconButton(onClick = { showPlusMenu = true }) {
@@ -219,18 +244,11 @@ fun LibraryScreen(
                 }
             }
 
-            // Spotify Category Filter Pills
+            // Spotify Category Filter Pills (Ordered: Playlists, Albums, Artists, Songs, Folders)
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                item {
-                    SpotifyFilterPill(
-                        selected = uiState.activeFilter == LibraryFilter.ALL_SONGS,
-                        label = "Songs (${uiState.songs.size})",
-                        onClick = { onIntent(LibraryIntent.SetFilter(LibraryFilter.ALL_SONGS)) }
-                    )
-                }
                 item {
                     SpotifyFilterPill(
                         selected = uiState.activeFilter == LibraryFilter.PLAYLISTS,
@@ -240,9 +258,9 @@ fun LibraryScreen(
                 }
                 item {
                     SpotifyFilterPill(
-                        selected = uiState.activeFilter == LibraryFilter.FOLDERS,
-                        label = "Folders (${uiState.folders.size})",
-                        onClick = { onIntent(LibraryIntent.SetFilter(LibraryFilter.FOLDERS)) }
+                        selected = uiState.activeFilter == LibraryFilter.ALBUMS,
+                        label = "Albums (${uiState.albums.size})",
+                        onClick = { onIntent(LibraryIntent.SetFilter(LibraryFilter.ALBUMS)) }
                     )
                 }
                 item {
@@ -254,14 +272,21 @@ fun LibraryScreen(
                 }
                 item {
                     SpotifyFilterPill(
-                        selected = uiState.activeFilter == LibraryFilter.ALBUMS,
-                        label = "Albums (${uiState.albums.size})",
-                        onClick = { onIntent(LibraryIntent.SetFilter(LibraryFilter.ALBUMS)) }
+                        selected = uiState.activeFilter == LibraryFilter.ALL_SONGS,
+                        label = "Songs (${uiState.songs.size})",
+                        onClick = { onIntent(LibraryIntent.SetFilter(LibraryFilter.ALL_SONGS)) }
+                    )
+                }
+                item {
+                    SpotifyFilterPill(
+                        selected = uiState.activeFilter == LibraryFilter.FOLDERS,
+                        label = "Folders (${uiState.folders.size})",
+                        onClick = { onIntent(LibraryIntent.SetFilter(LibraryFilter.FOLDERS)) }
                     )
                 }
             }
 
-            // Sub-header: Sort Indicator + Import Folder shortcut
+            // Sub-header: Sort Menu + Import Folder shortcut
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -269,26 +294,60 @@ fun LibraryScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Sort,
-                        contentDescription = "Sort order",
-                        tint = SpotifyTextSecondary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = when (uiState.activeFilter) {
-                            LibraryFilter.ALL_SONGS -> "Recently Added"
-                            LibraryFilter.PLAYLISTS -> "Alphabetical"
-                            LibraryFilter.ARTISTS -> "By Name"
-                            LibraryFilter.ALBUMS -> "By Title"
-                            LibraryFilter.FOLDERS -> "By Path"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = SpotifyTextSecondary,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                Box {
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .clickable { showSortMenu = true }
+                            .padding(vertical = 4.dp, horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Sort,
+                            contentDescription = "Sort order",
+                            tint = SpotifyGreen,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = uiState.sortOrder.label,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = SpotifyTextPrimary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+
+                    DropdownMenu(
+                        expanded = showSortMenu,
+                        onDismissRequest = { showSortMenu = false },
+                        containerColor = SpotifyCardBackground
+                    ) {
+                        LibrarySortOrder.entries.forEach { order ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = order.label,
+                                        color = if (uiState.sortOrder == order) SpotifyGreen else SpotifyTextPrimary,
+                                        fontWeight = if (uiState.sortOrder == order) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                },
+                                leadingIcon = if (uiState.sortOrder == order) {
+                                    {
+                                        Icon(
+                                            imageVector = Icons.Default.CheckCircle,
+                                            contentDescription = null,
+                                            tint = SpotifyGreen,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                } else null,
+                                onClick = {
+                                    showSortMenu = false
+                                    onIntent(LibraryIntent.SetSortOrder(order))
+                                }
+                            )
+                        }
+                    }
                 }
 
                 TextButton(
@@ -336,76 +395,166 @@ fun LibraryScreen(
             }
 
             // Empty Library State
-            if (uiState.songs.isEmpty() && !uiState.isScanning) {
+            val isCurrentFilterEmpty = when (uiState.activeFilter) {
+                LibraryFilter.PLAYLISTS -> uiState.playlists.isEmpty()
+                LibraryFilter.ALBUMS -> uiState.albums.isEmpty()
+                LibraryFilter.ARTISTS -> uiState.artists.isEmpty()
+                LibraryFilter.ALL_SONGS -> uiState.songs.isEmpty()
+                LibraryFilter.FOLDERS -> uiState.folders.isEmpty()
+            }
+
+            if (isCurrentFilterEmpty && !uiState.isScanning) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(horizontal = 24.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(72.dp)
-                                .clip(CircleShape)
-                                .background(SpotifyCardBackground),
-                            contentAlignment = Alignment.Center
+                    if (uiState.activeFilter == LibraryFilter.PLAYLISTS) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.FolderOpen,
-                                contentDescription = null,
-                                tint = SpotifyGreen,
-                                modifier = Modifier.size(36.dp)
+                            Box(
+                                modifier = Modifier
+                                    .size(72.dp)
+                                    .clip(CircleShape)
+                                    .background(SpotifyCardBackground),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PlaylistAdd,
+                                    contentDescription = null,
+                                    tint = SpotifyGreen,
+                                    modifier = Modifier.size(36.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                text = "Create your first playlist",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = SpotifyTextPrimary
                             )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "It's easy, we'll help you organize your favorite tracks.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = SpotifyTextSecondary,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(24.dp))
+                            Button(
+                                onClick = { onIntent(LibraryIntent.ShowCreatePlaylist(true)) },
+                                colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
+                                shape = RoundedCornerShape(50)
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, tint = Color.Black)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Create Playlist", color = Color.Black, fontWeight = FontWeight.Bold)
+                            }
                         }
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "No music in your library yet",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = SpotifyTextPrimary
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Import songs directly from your device folders (Downloads, Music, SD Card) or rescan device storage.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = SpotifyTextSecondary,
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(24.dp))
-                        Button(
-                            onClick = onPickFolder,
-                            colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
-                            shape = RoundedCornerShape(50)
+                    } else if (uiState.songs.isEmpty()) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
                         ) {
-                            Icon(Icons.Default.CreateNewFolder, contentDescription = null, tint = Color.Black)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Select Music Folder", color = Color.Black, fontWeight = FontWeight.Bold)
+                            Box(
+                                modifier = Modifier
+                                    .size(72.dp)
+                                    .clip(CircleShape)
+                                    .background(SpotifyCardBackground),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.FolderOpen,
+                                    contentDescription = null,
+                                    tint = SpotifyGreen,
+                                    modifier = Modifier.size(36.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                text = "No music in your library yet",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = SpotifyTextPrimary
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Import songs directly from your device folders (Downloads, Music, SD Card) or rescan device storage.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = SpotifyTextSecondary,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(24.dp))
+                            Button(
+                                onClick = onPickFolder,
+                                colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
+                                shape = RoundedCornerShape(50)
+                            ) {
+                                Icon(Icons.Default.CreateNewFolder, contentDescription = null, tint = Color.Black)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Select Music Folder", color = Color.Black, fontWeight = FontWeight.Bold)
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            OutlinedButton(
+                                onClick = { onIntent(LibraryIntent.RescanLibrary) },
+                                shape = RoundedCornerShape(50)
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = null, tint = SpotifyTextPrimary)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Rescan Storage", color = SpotifyTextPrimary)
+                            }
                         }
-                        Spacer(modifier = Modifier.height(12.dp))
-                        OutlinedButton(
-                            onClick = { onIntent(LibraryIntent.RescanLibrary) },
-                            shape = RoundedCornerShape(50)
+                    } else {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
                         ) {
-                            Icon(Icons.Default.Refresh, contentDescription = null, tint = SpotifyTextPrimary)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Rescan Storage", color = SpotifyTextPrimary)
+                            Text(
+                                text = "No items found in this section",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = SpotifyTextSecondary
+                            )
                         }
                     }
                 }
             } else {
                 // Content List
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(bottom = 140.dp)
                 ) {
                     when (uiState.activeFilter) {
+                        LibraryFilter.PLAYLISTS -> {
+                            items(uiState.playlists, key = { it.id }) { playlist ->
+                                SpotifyPlaylistItem(
+                                    playlist = playlist,
+                                    onClick = { onIntent(LibraryIntent.OpenPlaylist(playlist)) }
+                                )
+                            }
+                        }
+                        LibraryFilter.ALBUMS -> {
+                            items(uiState.albums, key = { it.id }) { album ->
+                                SpotifyAlbumItem(
+                                    album = album,
+                                    onClick = { onIntent(LibraryIntent.OpenAlbum(album)) }
+                                )
+                            }
+                        }
+                        LibraryFilter.ARTISTS -> {
+                            items(uiState.artists, key = { it.id }) { artist ->
+                                SpotifyArtistItem(
+                                    artist = artist,
+                                    onClick = { onIntent(LibraryIntent.OpenArtist(artist)) }
+                                )
+                            }
+                        }
                         LibraryFilter.ALL_SONGS -> {
                             items(uiState.songs, key = { it.id }) { song ->
-                                SpotifyTrackRow(
+                                TrackListItem(
                                     song = song,
                                     isPlaying = song.id == uiState.currentSongId && uiState.isPlaying,
                                     isSelected = uiState.selectedSongIds.contains(song.id),
@@ -418,15 +567,7 @@ fun LibraryScreen(
                                         }
                                     },
                                     onFavoriteToggle = { onIntent(LibraryIntent.ToggleFavorite(song)) },
-                                    onAddToPlaylist = { onIntent(LibraryIntent.ShowAddToPlaylistDialog(song)) }
-                                )
-                            }
-                        }
-                        LibraryFilter.PLAYLISTS -> {
-                            items(uiState.playlists, key = { it.id }) { playlist ->
-                                SpotifyPlaylistItem(
-                                    playlist = playlist,
-                                    onClick = { onIntent(LibraryIntent.OpenPlaylist(playlist)) }
+                                    onAddToPlaylistClick = { onIntent(LibraryIntent.ShowAddToPlaylistDialog(song)) }
                                 )
                             }
                         }
@@ -438,26 +579,11 @@ fun LibraryScreen(
                                 )
                             }
                         }
-                        LibraryFilter.ARTISTS -> {
-                            items(uiState.artists, key = { it.id }) { artist ->
-                                SpotifyArtistItem(
-                                    artist = artist,
-                                    onClick = { onIntent(LibraryIntent.OpenArtist(artist)) }
-                                )
-                            }
-                        }
-                        LibraryFilter.ALBUMS -> {
-                            items(uiState.albums, key = { it.id }) { album ->
-                                SpotifyAlbumItem(
-                                    album = album,
-                                    onClick = { onIntent(LibraryIntent.OpenAlbum(album)) }
-                                )
-                            }
-                        }
                     }
                 }
             }
         }
+    }
         }
 
         // Notification Snackbar
@@ -647,216 +773,290 @@ private fun SpotifyDetailScreen(
         }
     }
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(SpotifyBackground)
-    ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // Top Bar with Back Button
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(start = 8.dp, top = 12.dp, end = 16.dp, bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = { onIntent(LibraryIntent.CloseDetail) }) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint = SpotifyTextPrimary,
-                        modifier = Modifier.size(28.dp)
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var isEditMode by remember(detail) { mutableStateOf(false) }
+
+    BackHandler(enabled = isEditMode) {
+        isEditMode = false
+    }
+
+    if (showRenameDialog && detail is LibraryDetailView.PlaylistDetail) {
+        var newName by remember(detail.playlist.name) { mutableStateOf(detail.playlist.name) }
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            containerColor = SpotifyCardBackground,
+            title = {
+                Text("Rename playlist", color = SpotifyTextPrimary, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                OutlinedTextField(
+                    value = newName,
+                    onValueChange = { newName = it },
+                    placeholder = { Text("Playlist name", color = SpotifyTextSecondary) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = SpotifyGreen,
+                        unfocusedBorderColor = SpotifyTextSecondary,
+                        focusedTextColor = SpotifyTextPrimary,
+                        unfocusedTextColor = SpotifyTextPrimary
+                    )
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (newName.isNotBlank()) {
+                            showRenameDialog = false
+                            onIntent(LibraryIntent.RenamePlaylist(detail.playlist.id, newName.trim()))
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
+                    shape = RoundedCornerShape(50)
+                ) {
+                    Text("Save", color = Color.Black, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = false }) {
+                    Text("Cancel", color = SpotifyTextSecondary)
+                }
+            }
+        )
+    }
+
+    if (showDeleteConfirmDialog && detail is LibraryDetailView.PlaylistDetail) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmDialog = false },
+            containerColor = SpotifyCardBackground,
+            title = {
+                Text("Delete Playlist?", color = SpotifyTextPrimary, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Text(
+                    "Are you sure you want to delete \"${detail.playlist.name}\"? This playlist will be removed from your library.",
+                    color = SpotifyTextSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteConfirmDialog = false
+                        onIntent(LibraryIntent.DeletePlaylist(detail.playlist.id))
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE22134)),
+                    shape = RoundedCornerShape(50)
+                ) {
+                    Text("Delete", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmDialog = false }) {
+                    Text("Cancel", color = SpotifyTextPrimary)
+                }
+            }
+        )
+    }
+
+    MediaDetailView(
+        title = title,
+        subtitle = subtitle,
+        songs = songs,
+        headerArtwork = headerArtwork,
+        currentSongId = uiState.currentSongId,
+        isPlaying = uiState.isPlaying,
+        isShuffleEnabled = uiState.isShuffleEnabled,
+        onBack = {
+            if (isEditMode) {
+                isEditMode = false
+            } else {
+                onIntent(LibraryIntent.CloseDetail)
+            }
+        },
+        onPlaySong = { _, index -> onIntent(LibraryIntent.PlayAll(songs, index)) },
+        onPlayAll = { onIntent(LibraryIntent.PlayAll(songs, 0)) },
+        onToggleShuffle = { onIntent(LibraryIntent.ToggleShuffle(songs)) },
+        onToggleFavorite = { onIntent(LibraryIntent.ToggleFavorite(it)) },
+        modifier = modifier,
+        topBarActions = {
+            if (detail is LibraryDetailView.PlaylistDetail) {
+                TextButton(onClick = { isEditMode = !isEditMode }) {
+                    Text(
+                        text = if (isEditMode) "Done" else "Edit",
+                        color = if (isEditMode) SpotifyGreen else SpotifyTextPrimary,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
                     )
                 }
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 140.dp)
-            ) {
-                // Header section
-                item {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 12.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        headerArtwork()
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = title,
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = SpotifyTextPrimary,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = subtitle,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = SpotifyTextSecondary,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // Action Bar: Shuffle + Add Songs + Big Play Button
-                        if (songs.isNotEmpty()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    IconButton(
-                                        onClick = { onIntent(LibraryIntent.ToggleShuffle(songs)) }
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Shuffle,
-                                            contentDescription = "Shuffle",
-                                            tint = if (uiState.isShuffleEnabled) SpotifyGreen else Color(0xFF888888),
-                                            modifier = Modifier.size(28.dp)
-                                        )
-                                    }
-                                    if (detail is LibraryDetailView.PlaylistDetail) {
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        OutlinedButton(
-                                            onClick = { onIntent(LibraryIntent.ShowAddSongsPicker(detail.playlist)) },
-                                            shape = RoundedCornerShape(50),
-                                            border = BorderStroke(1.dp, SpotifyTextSecondary.copy(alpha = 0.4f)),
-                                            colors = ButtonDefaults.outlinedButtonColors(contentColor = SpotifyTextPrimary),
-                                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Add,
-                                                contentDescription = null,
-                                                tint = SpotifyGreen,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text("Add songs", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                                        }
-                                    }
-                                }
-
-                                IconButton(
-                                    onClick = { onIntent(LibraryIntent.PlayAll(songs, 0)) },
-                                    modifier = Modifier
-                                        .size(56.dp)
-                                        .clip(CircleShape)
-                                        .background(SpotifyGreen)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.PlayArrow,
-                                        contentDescription = "Play all",
-                                        tint = Color.Black,
-                                        modifier = Modifier.size(36.dp)
-                                    )
-                                }
-                            }
+                AnimatedVisibility(
+                    visible = isEditMode,
+                    enter = fadeIn(animationSpec = tween(180)) + expandHorizontally(),
+                    exit = fadeOut(animationSpec = tween(150)) + shrinkHorizontally()
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { showRenameDialog = true }) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = "Rename Playlist",
+                                tint = SpotifyTextSecondary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        IconButton(onClick = { showDeleteConfirmDialog = true }) {
+                            Icon(
+                                imageVector = Icons.Default.DeleteOutline,
+                                contentDescription = "Delete Playlist",
+                                tint = Color(0xFFE22134),
+                                modifier = Modifier.size(24.dp)
+                            )
                         }
                     }
                 }
-
-                // Song list or empty placeholder
-                if (songs.isEmpty()) {
-                    item {
-                        if (detail is LibraryDetailView.PlaylistDetail) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 40.dp, bottom = 40.dp, start = 24.dp, end = 24.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(72.dp)
-                                        .clip(CircleShape)
-                                        .background(SpotifyCardBackground),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.PlaylistAdd,
-                                        contentDescription = null,
-                                        tint = SpotifyGreen,
-                                        modifier = Modifier.size(36.dp)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Text(
-                                    text = "This playlist is empty",
-                                    style = MaterialTheme.typography.titleLarge,
-                                    fontWeight = FontWeight.Bold,
-                                    color = SpotifyTextPrimary
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = "Find songs from your library to add to this playlist.",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = SpotifyTextSecondary,
-                                    textAlign = TextAlign.Center
-                                )
-                                Spacer(modifier = Modifier.height(20.dp))
-                                Button(
-                                    onClick = { onIntent(LibraryIntent.ShowAddSongsPicker(detail.playlist)) },
-                                    colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
-                                    shape = RoundedCornerShape(50),
-                                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp)
-                                ) {
-                                    Icon(Icons.Default.Add, contentDescription = null, tint = Color.Black, modifier = Modifier.size(20.dp))
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Add to this playlist", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                                }
-                            }
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 40.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "No songs found in this section",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = SpotifyTextSecondary
-                                )
-                            }
+            }
+        },
+        actionBarActions = {
+            if (detail is LibraryDetailView.PlaylistDetail) {
+                Spacer(modifier = Modifier.width(8.dp))
+                OutlinedButton(
+                    onClick = { onIntent(LibraryIntent.ShowAddSongsPicker(detail.playlist)) },
+                    shape = RoundedCornerShape(50),
+                    border = BorderStroke(1.dp, SpotifyTextSecondary.copy(alpha = 0.4f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = SpotifyTextPrimary),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = null,
+                        tint = SpotifyGreen,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Add songs", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                }
+                AnimatedVisibility(
+                    visible = isEditMode,
+                    enter = fadeIn(animationSpec = tween(180)) + expandHorizontally(),
+                    exit = fadeOut(animationSpec = tween(150)) + shrinkHorizontally()
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        OutlinedButton(
+                            onClick = { showRenameDialog = true },
+                            shape = RoundedCornerShape(50),
+                            border = BorderStroke(1.dp, SpotifyTextSecondary.copy(alpha = 0.4f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = SpotifyTextPrimary),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = null,
+                                tint = SpotifyTextSecondary,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Rename", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
-                } else {
-                    itemsIndexed(songs, key = { _, song -> song.id }) { index, song ->
-                        val playlistId = (detail as? LibraryDetailView.PlaylistDetail)?.playlist?.id
-                        SpotifyTrackRow(
-                            song = song,
-                            isPlaying = song.id == uiState.currentSongId && uiState.isPlaying,
-                            isSelected = false,
-                            isMultiSelectMode = false,
-                            onClick = { onIntent(LibraryIntent.PlayAll(songs, index)) },
-                            onFavoriteToggle = { onIntent(LibraryIntent.ToggleFavorite(song)) },
-                            onAddToPlaylist = { onIntent(LibraryIntent.ShowAddToPlaylistDialog(song)) },
-                            onRemoveFromPlaylist = if (playlistId != null) {
-                                { onIntent(LibraryIntent.RemoveSongFromPlaylist(playlistId, song.id)) }
-                            } else null
+                }
+            }
+        },
+        emptyContent = {
+            if (detail is LibraryDetailView.PlaylistDetail) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 40.dp, bottom = 40.dp, start = 24.dp, end = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(72.dp)
+                            .clip(CircleShape)
+                            .background(SpotifyCardBackground),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlaylistAdd,
+                            contentDescription = null,
+                            tint = SpotifyGreen,
+                            modifier = Modifier.size(36.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "This playlist is empty",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = SpotifyTextPrimary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Find songs from your library to add to this playlist.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = SpotifyTextSecondary,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(20.dp))
+                    Button(
+                        onClick = { onIntent(LibraryIntent.ShowAddSongsPicker(detail.playlist)) },
+                        colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
+                        shape = RoundedCornerShape(50),
+                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp)
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, tint = Color.Black, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Add to this playlist", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    }
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 40.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "No songs found in this section",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = SpotifyTextSecondary
+                    )
+                }
+            }
+        },
+        songTrailingContent = { song ->
+            val playlistId = (detail as? LibraryDetailView.PlaylistDetail)?.playlist?.id
+            IconButton(
+                onClick = { onIntent(LibraryIntent.ShowAddToPlaylistDialog(song)) },
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.PlaylistAdd,
+                    contentDescription = "Add to playlist",
+                    tint = SpotifyTextSecondary,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            if (playlistId != null) {
+                AnimatedVisibility(
+                    visible = isEditMode,
+                    enter = fadeIn(animationSpec = tween(150)) + expandHorizontally(),
+                    exit = fadeOut(animationSpec = tween(150)) + shrinkHorizontally()
+                ) {
+                    IconButton(
+                        onClick = { onIntent(LibraryIntent.RemoveSongFromPlaylist(playlistId, song.id)) },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Remove from playlist",
+                            tint = Color(0xFFE22134),
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
             }
         }
-    }
+    )
 }
 
 @Composable
@@ -881,144 +1081,6 @@ private fun SpotifyFilterPill(
     }
 }
 
-@Composable
-private fun SpotifyTrackRow(
-    song: Song,
-    isPlaying: Boolean,
-    isSelected: Boolean,
-    isMultiSelectMode: Boolean,
-    onClick: () -> Unit,
-    onFavoriteToggle: () -> Unit,
-    onAddToPlaylist: () -> Unit,
-    onRemoveFromPlaylist: (() -> Unit)? = null
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        if (isMultiSelectMode) {
-            Checkbox(
-                checked = isSelected,
-                onCheckedChange = { onClick() },
-                colors = CheckboxDefaults.colors(checkedColor = SpotifyGreen, checkmarkColor = Color.Black),
-                modifier = Modifier.padding(end = 8.dp)
-            )
-        }
-
-        Box(
-            modifier = Modifier
-                .size(52.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(SpotifyCardBackground),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Default.MusicNote,
-                contentDescription = null,
-                tint = SpotifyTextSecondary.copy(alpha = 0.35f),
-                modifier = Modifier.size(24.dp)
-            )
-            val artworkModel = song.artworkUri ?: "content://media/external/audio/albumart/${song.albumId}"
-            AsyncImage(
-                model = artworkModel,
-                contentDescription = song.title,
-                modifier = Modifier.matchParentSize(),
-                contentScale = ContentScale.Crop
-            )
-        }
-
-        Spacer(modifier = Modifier.width(12.dp))
-
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = song.title,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = if (isPlaying) SpotifyGreen else SpotifyTextPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // Downloaded green indicator (Spotify style)
-                Icon(
-                    imageVector = Icons.Default.CheckCircle,
-                    contentDescription = "Downloaded offline",
-                    tint = SpotifyGreen,
-                    modifier = Modifier.size(12.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = song.artistName,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = SpotifyTextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-
-        IconButton(onClick = onFavoriteToggle) {
-            Icon(
-                imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                contentDescription = if (song.isFavorite) "Liked" else "Like",
-                tint = if (song.isFavorite) SpotifyGreen else SpotifyTextSecondary,
-                modifier = Modifier.size(22.dp)
-            )
-        }
-
-        var showMenu by remember { mutableStateOf(false) }
-        Box {
-            IconButton(onClick = { showMenu = true }) {
-                Icon(
-                    imageVector = Icons.Default.MoreVert,
-                    contentDescription = "More options",
-                    tint = SpotifyTextSecondary,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            DropdownMenu(
-                expanded = showMenu,
-                onDismissRequest = { showMenu = false },
-                containerColor = SpotifyCardBackground
-            ) {
-                DropdownMenuItem(
-                    text = { Text("Add to playlist", color = SpotifyTextPrimary) },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.PlaylistAdd,
-                            contentDescription = null,
-                            tint = SpotifyGreen
-                        )
-                    },
-                    onClick = {
-                        showMenu = false
-                        onAddToPlaylist()
-                    }
-                )
-                if (onRemoveFromPlaylist != null) {
-                    DropdownMenuItem(
-                        text = { Text("Remove from this playlist", color = SpotifyTextPrimary) },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = null,
-                                tint = SpotifyTextSecondary
-                            )
-                        },
-                        onClick = {
-                            showMenu = false
-                            onRemoveFromPlaylist()
-                        }
-                    )
-                }
-            }
-        }
-    }
-}
 
 @Composable
 private fun SpotifyPlaylistItem(
@@ -1156,402 +1218,4 @@ private fun SpotifyAlbumItem(
     }
 }
 
-@Composable
-private fun CreatePlaylistDialog(
-    onDismiss: () -> Unit,
-    onCreate: (String) -> Unit
-) {
-    var name by remember { mutableStateOf("") }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = SpotifyCardBackground,
-        title = { Text("Give your playlist a name", color = SpotifyTextPrimary, fontWeight = FontWeight.Bold) },
-        text = {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                placeholder = { Text("My playlist #1", color = SpotifyTextSecondary) },
-                singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = SpotifyGreen,
-                    unfocusedBorderColor = SpotifyTextSecondary,
-                    focusedTextColor = SpotifyTextPrimary,
-                    unfocusedTextColor = SpotifyTextPrimary
-                )
-            )
-        },
-        confirmButton = {
-            Button(
-                onClick = { if (name.isNotBlank()) onCreate(name) },
-                colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
-                shape = RoundedCornerShape(50)
-            ) {
-                Text("Create", color = Color.Black, fontWeight = FontWeight.Bold)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel", color = SpotifyTextSecondary)
-            }
-        }
-    )
-}
 
-@Composable
-private fun AddToPlaylistDialog(
-    song: Song?,
-    selectedSongCount: Int,
-    playlists: List<Playlist>,
-    onDismiss: () -> Unit,
-    onCreateNewPlaylist: () -> Unit,
-    onSelectPlaylist: (Long) -> Unit
-) {
-    val title = if (song != null) "Add to playlist" else "Add $selectedSongCount songs to playlist"
-    val subtitle = song?.title
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = SpotifyCardBackground,
-        title = {
-            Column {
-                Text(
-                    text = title,
-                    color = SpotifyTextPrimary,
-                    fontWeight = FontWeight.Bold,
-                    style = MaterialTheme.typography.titleLarge
-                )
-                if (subtitle != null) {
-                    Text(
-                        text = subtitle,
-                        color = SpotifyTextSecondary,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-        },
-        text = {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(300.dp)
-            ) {
-                item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable {
-                                onDismiss()
-                                onCreateNewPlaylist()
-                            }
-                            .padding(vertical = 10.dp, horizontal = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(SpotifySurfaceElevated),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = null,
-                                tint = SpotifyGreen,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(
-                            text = "New playlist",
-                            color = SpotifyTextPrimary,
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.bodyLarge
-                        )
-                    }
-                }
-
-                if (playlists.isEmpty()) {
-                    item {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 24.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "No playlists found. Create one above!",
-                                color = SpotifyTextSecondary,
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
-                    }
-                } else {
-                    items(playlists, key = { it.id }) { playlist ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { onSelectPlaylist(playlist.id) }
-                                .padding(vertical = 8.dp, horizontal = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(SpotifySurfaceElevated),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.QueueMusic,
-                                    contentDescription = null,
-                                    tint = SpotifyTextSecondary.copy(alpha = 0.5f),
-                                    modifier = Modifier.size(24.dp)
-                                )
-                                if (!playlist.customCoverUri.isNullOrBlank()) {
-                                    AsyncImage(
-                                        model = playlist.customCoverUri,
-                                        contentDescription = playlist.name,
-                                        modifier = Modifier.matchParentSize(),
-                                        contentScale = ContentScale.Crop
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = playlist.name,
-                                    color = SpotifyTextPrimary,
-                                    fontWeight = FontWeight.SemiBold,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                val countText = if (playlist.songCount == 1) "1 song" else "${playlist.songCount} songs"
-                                Text(
-                                    text = "$countText • Playlist",
-                                    color = SpotifyTextSecondary,
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel", color = SpotifyTextSecondary)
-            }
-        }
-    )
-}
-
-@Composable
-private fun AddSongsToPlaylistDialog(
-    playlist: Playlist,
-    allSongs: List<Song>,
-    currentPlaylistSongs: List<Song>,
-    onAddSong: (Long) -> Unit,
-    onRemoveSong: (Long) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var searchQuery by remember { mutableStateOf("") }
-    val currentSongIds = remember(currentPlaylistSongs) {
-        currentPlaylistSongs.map { it.id }.toSet()
-    }
-
-    val filteredSongs = remember(searchQuery, allSongs) {
-        if (searchQuery.isBlank()) {
-            allSongs
-        } else {
-            val q = searchQuery.trim().lowercase()
-            allSongs.filter {
-                it.title.lowercase().contains(q) ||
-                it.artistName.lowercase().contains(q) ||
-                it.albumName.lowercase().contains(q)
-            }
-        }
-    }
-
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(SpotifyBackground)
-        ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                // Top Bar: Close, Title, Done
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 8.dp, top = 20.dp, end = 16.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(onClick = onDismiss) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Close",
-                            tint = SpotifyTextPrimary,
-                            modifier = Modifier.size(26.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Add to playlist",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = SpotifyTextPrimary
-                        )
-                        Text(
-                            text = playlist.name,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = SpotifyTextSecondary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    TextButton(onClick = onDismiss) {
-                        Text("Done", color = SpotifyGreen, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    }
-                }
-
-                // Search Box
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    placeholder = { Text("Search songs or artists", color = SpotifyTextSecondary) },
-                    leadingIcon = {
-                        Icon(Icons.Default.Search, contentDescription = "Search", tint = SpotifyTextSecondary)
-                    },
-                    trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { searchQuery = "" }) {
-                                Icon(Icons.Default.Close, contentDescription = "Clear", tint = SpotifyTextSecondary)
-                            }
-                        }
-                    },
-                    shape = RoundedCornerShape(8.dp),
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = SpotifySurfaceElevated,
-                        unfocusedContainerColor = SpotifySurfaceElevated,
-                        focusedBorderColor = SpotifyGreen,
-                        unfocusedBorderColor = Color.Transparent,
-                        focusedTextColor = SpotifyTextPrimary,
-                        unfocusedTextColor = SpotifyTextPrimary
-                    )
-                )
-
-                if (filteredSongs.isEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(top = 60.dp),
-                        contentAlignment = Alignment.TopCenter
-                    ) {
-                        Text(
-                            text = if (searchQuery.isBlank()) "No songs available in library" else "No matching songs found",
-                            color = SpotifyTextSecondary,
-                            style = MaterialTheme.typography.bodyLarge
-                        )
-                    }
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(bottom = 40.dp)
-                    ) {
-                        items(filteredSongs, key = { it.id }) { song ->
-                            val isAdded = currentSongIds.contains(song.id)
-
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        if (isAdded) onRemoveSong(song.id) else onAddSong(song.id)
-                                    }
-                                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(48.dp)
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .background(SpotifyCardBackground),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.MusicNote,
-                                        contentDescription = null,
-                                        tint = SpotifyTextSecondary.copy(alpha = 0.35f),
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                    val artwork = song.artworkUri ?: "content://media/external/audio/albumart/${song.albumId}"
-                                    AsyncImage(
-                                        model = artwork,
-                                        contentDescription = song.title,
-                                        modifier = Modifier.matchParentSize(),
-                                        contentScale = ContentScale.Crop
-                                    )
-                                }
-
-                                Spacer(modifier = Modifier.width(12.dp))
-
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = song.title,
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = if (isAdded) SpotifyGreen else SpotifyTextPrimary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = song.artistName,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = SpotifyTextSecondary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-
-                                IconButton(
-                                    onClick = {
-                                        if (isAdded) onRemoveSong(song.id) else onAddSong(song.id)
-                                    }
-                                ) {
-                                    if (isAdded) {
-                                        Icon(
-                                            imageVector = Icons.Default.CheckCircle,
-                                            contentDescription = "Added to playlist",
-                                            tint = SpotifyGreen,
-                                            modifier = Modifier.size(26.dp)
-                                        )
-                                    } else {
-                                        Icon(
-                                            imageVector = Icons.Default.Add,
-                                            contentDescription = "Add to playlist",
-                                            tint = SpotifyTextPrimary,
-                                            modifier = Modifier.size(26.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}

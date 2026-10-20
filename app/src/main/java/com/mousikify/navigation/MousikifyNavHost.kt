@@ -1,6 +1,9 @@
 package com.mousikify.navigation
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
@@ -41,6 +44,7 @@ import com.mousikify.core.designsystem.theme.SpotifyGreen
 import com.mousikify.core.designsystem.theme.SpotifyTextPrimary
 import com.mousikify.core.designsystem.theme.SpotifyTextSecondary
 import com.mousikify.feature.equalizer.EqualizerRoute
+import com.mousikify.feature.home.DiagnosticsRoute
 import com.mousikify.feature.home.HomeRoute
 import com.mousikify.feature.library.LibraryRoute
 import androidx.compose.runtime.mutableStateOf
@@ -60,6 +64,7 @@ sealed class Screen(
     data object Search : Screen("search", "Search", Icons.Filled.Search, Icons.Outlined.Search)
     data object Library : Screen("library", "Your Library", Icons.Filled.LibraryMusic, Icons.Outlined.LibraryMusic)
     data object Equalizer : Screen("equalizer", "Equalizer", Icons.Filled.Home, Icons.Outlined.Home)
+    data object Diagnostics : Screen("diagnostics", "Diagnostics", Icons.Filled.Home, Icons.Outlined.Home)
 }
 
 val bottomNavItems = listOf(
@@ -149,11 +154,16 @@ fun MainAppContainer(
             startDestination = Screen.Home.route,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(bottom = if (showBottomBar) innerPadding.calculateBottomPadding() else 0.dp)
+                .padding(bottom = if (showBottomBar) innerPadding.calculateBottomPadding() else 0.dp),
+            enterTransition = { fadeIn(animationSpec = tween(180)) },
+            exitTransition = { fadeOut(animationSpec = tween(140)) },
+            popEnterTransition = { fadeIn(animationSpec = tween(180)) },
+            popExitTransition = { fadeOut(animationSpec = tween(140)) }
         ) {
             composable(Screen.Home.route) {
                 HomeRoute(
                     onNavigateToEqualizer = { navController.navigate(Screen.Equalizer.route) },
+                    onNavigateToDiagnostics = { navController.navigate(Screen.Diagnostics.route) },
                     homeResetTrigger = homeResetTrigger
                 )
             }
@@ -166,6 +176,11 @@ fun MainAppContainer(
             composable(Screen.Equalizer.route) {
                 EqualizerRoute(
                     onBackClick = { navController.popBackStack() }
+                )
+            }
+            composable(Screen.Diagnostics.route) {
+                DiagnosticsRoute(
+                    onNavigateBack = { navController.popBackStack() }
                 )
             }
         }
