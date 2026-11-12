@@ -1,10 +1,16 @@
 # Proguard & R8 Rules for Mousikify Music Player
 
 # -------------------------------------------------------------
-# 1. JAudioTagger (Reflection-based audio format detection)
+# 1. JAudioTagger & NewPipeExtractor / Rhino (Reflection-based)
 # -------------------------------------------------------------
--keep class net.jthink.jaudiotagger.** { *; }
--dontwarn net.jthink.jaudiotagger.**
+-keep class org.jaudiotagger.** { *; }
+-dontwarn org.jaudiotagger.**
+-keep class org.schabi.newpipe.** { *; }
+-dontwarn org.schabi.newpipe.**
+-keep class org.mozilla.javascript.** { *; }
+-dontwarn org.mozilla.javascript.**
+-keep class com.grack.nanojson.** { *; }
+-dontwarn com.grack.nanojson.**
 
 # -------------------------------------------------------------
 # 2. AndroidX Media3 / ExoPlayer & Audio Codecs

@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.mousikify",
+      "sha256_cert_fingerprints": [
+        "48:98:73:DF:85:04:F1:5A:66:37:22:C1:45:5B:1A:D6:06:1F:BE:B2:F8:98:19:B5:DC:0F:ED:4F:B7:85:C5:37"
+      ]
+    }
+  }
+]

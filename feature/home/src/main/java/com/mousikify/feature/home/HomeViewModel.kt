@@ -9,8 +9,17 @@ import com.mousikify.core.database.preferences.PlaybackPreferences
 import com.mousikify.core.database.repository.PlaylistRepository
 import com.mousikify.core.database.repository.SongRepository
 import com.mousikify.core.media.controller.MusicController
+import com.mousikify.core.media.recommendation.DiscoverRecommendationEngine
+import com.mousikify.core.media.remote.RemoteMusicRepository
 import com.mousikify.core.model.Album
+import com.mousikify.core.model.AlbumProfile
+import com.mousikify.core.model.Artist
+import com.mousikify.core.model.ArtistProfile
+import com.mousikify.core.model.PlaybackContext
+import com.mousikify.core.model.PlaybackContextType
 import com.mousikify.core.model.Playlist
+import com.mousikify.core.model.RecentlyPlayedItem
+import com.mousikify.core.model.RecentlyPlayedType
 import com.mousikify.core.model.Song
 import com.mousikify.core.scanner.classifier.MetadataClassifier
 import com.mousikify.core.scanner.indexer.MediaStoreScanner
@@ -22,8 +31,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -41,7 +52,8 @@ data class SmartMix(
 
 sealed interface HomeDetailView {
     data class PlaylistDetail(val playlist: Playlist, val songs: List<Song>) : HomeDetailView
-    data class AlbumDetail(val album: Album, val songs: List<Song>) : HomeDetailView
+    data class AlbumDetail(val album: Album, val songs: List<Song>, val albumProfile: AlbumProfile? = null) : HomeDetailView
+    data class ArtistDetail(val artist: Artist, val songs: List<Song>, val artistProfile: ArtistProfile? = null) : HomeDetailView
     data class LikedSongsDetail(val songs: List<Song>) : HomeDetailView
     data class MixDetail(val mix: SmartMix, val songs: List<Song>) : HomeDetailView
 }
@@ -50,8 +62,11 @@ data class HomeUiState(
     val greeting: String = "",
     val totalSongCount: Int = 0,
     val allSongs: List<Song> = emptyList(),
-    val recentlyPlayed: List<Song> = emptyList(),
+    val recentlyHeard: List<Song> = emptyList(),
+    val recentlyPlayed: List<RecentlyPlayedItem> = emptyList(),
     val recentlyAdded: List<Song> = emptyList(),
+
+
     val forgottenFavorites: List<Song> = emptyList(),
     val playlists: List<Playlist> = emptyList(),
     val albums: List<Album> = emptyList(),
@@ -62,9 +77,29 @@ data class HomeUiState(
     val isShuffleEnabled: Boolean = false,
     val isLoading: Boolean = false,
     val isScanning: Boolean = false,
+    val isDiscoverRefreshing: Boolean = false,
     val statusMessage: String? = null,
-    val activeDetail: HomeDetailView? = null
-)
+    val activeDetail: HomeDetailView? = null,
+    val pinnedVideoIds: Set<String> = emptySet(),
+    val cacheUpdateTick: Long = 0L,
+    val canUndo: Boolean = false,
+    val favoriteSongIds: Set<Long> = emptySet(),
+    val favoriteVideoIds: Set<String> = emptySet()
+) {
+    fun isFavorite(song: Song): Boolean {
+        if (song.id in favoriteSongIds) return true
+        val vid = song.remoteVideoId
+        if (vid != null && vid in favoriteVideoIds) return true
+        return song.isFavorite
+    }
+
+    fun isAlbumSaved(albumProfile: AlbumProfile): Boolean =
+        SongRepository.isStreamingAlbumSaved(
+            album = albumProfile.album,
+            tracks = albumProfile.tracks,
+            librarySongs = allSongs
+        )
+}
 
 sealed interface HomeIntent {
     data class PlaySong(val song: Song, val queue: List<Song>) : HomeIntent
@@ -83,10 +118,28 @@ sealed interface HomeIntent {
     data class DeletePlaylist(val playlistId: Long) : HomeIntent
     data class RenamePlaylist(val playlistId: Long, val newName: String) : HomeIntent
     data class AddSongToPlaylist(val playlistId: Long, val songId: Long) : HomeIntent
+    data class AddSongObjectToPlaylist(val playlistId: Long, val song: Song) : HomeIntent
+    data class CreatePlaylistAndAddSong(val name: String, val song: Song) : HomeIntent
     data class RemoveSongFromPlaylist(val playlistId: Long, val songId: Long) : HomeIntent
     data class ReorderPlaylist(val playlistId: Long, val orderedSongIds: List<Long>) : HomeIntent
     data object Rescan : HomeIntent
+    data object RefreshDiscoverMix : HomeIntent
     data object DismissStatusMessage : HomeIntent
+    data object UndoDelete : HomeIntent
+    data class OpenArtist(val artist: Artist) : HomeIntent
+    data class OpenArtistByName(val artistName: String) : HomeIntent
+    data class OpenAlbumByName(
+        val albumTitle: String,
+        val artistName: String,
+        val playlistUrl: String? = null,
+        val artworkUri: String? = null
+    ) : HomeIntent
+    data class PlayNext(val song: Song) : HomeIntent
+    data class AddToQueue(val song: Song) : HomeIntent
+    data class StartRadio(val song: Song) : HomeIntent
+    data class StartArtistRadio(val artistName: String) : HomeIntent
+    data class OpenRecentlyPlayed(val item: RecentlyPlayedItem) : HomeIntent
+    data class SavePlaylistToLibrary(val name: String, val songs: List<Song>) : HomeIntent
 }
 
 @HiltViewModel
@@ -97,15 +150,31 @@ class HomeViewModel @Inject constructor(
     private val musicController: MusicController,
     private val mediaStoreScanner: MediaStoreScanner,
     private val safFolderScanner: SafFolderScanner,
-    private val preferences: PlaybackPreferences
+    private val preferences: PlaybackPreferences,
+    private val remoteMusicRepository: RemoteMusicRepository,
+    private val discoverRecommendationEngine: DiscoverRecommendationEngine
 ) : ViewModel() {
 
     init {
         // Clean up any non-favorite remote stream tracks that may have polluted the songs table
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                songRepository.purgeInvalidRecentlyPlayedAlbums()
                 songRepository.deleteNonFavoriteRemoteSongs()
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                android.util.Log.w("HomeViewModel", "Failed to clean up non-favorite remote songs", e)
+            }
+        }
+        // Asynchronously check or refresh 24-hour Discover Mix recommendations
+        viewModelScope.launch(Dispatchers.IO) {
+            songRepository.allPlayableSongs.collect { playable ->
+                if (playable.isNotEmpty()) {
+                    val songs = discoverRecommendationEngine.getOrRefreshDiscoverMix(playable)
+                    if (songs.isNotEmpty() && songs != _discoverSongs.value) {
+                        _discoverSongs.value = songs
+                    }
+                }
+            }
         }
     }
 
@@ -120,74 +189,124 @@ class HomeViewModel @Inject constructor(
         }
 
     private val _isScanning = MutableStateFlow(false)
+    private val _isDiscoverRefreshing = MutableStateFlow(false)
     private val _statusMessage = MutableStateFlow<String?>(null)
     private val _activeDetail = MutableStateFlow<HomeDetailView?>(null)
+    private val _canUndo = MutableStateFlow(false)
+    private var lastRemovedPlaylistSong: Pair<Long, Song>? = null
+    private val _discoverSongs = MutableStateFlow<List<Song>>(
+        discoverRecommendationEngine.loadCachedDiscoverMix()?.second.orEmpty()
+    )
     private var detailJob: Job? = null
+    private var activeGenMixId: String? = null
+    private val _openRadioEvent = MutableStateFlow<Song?>(null)
+    val openRadioEvent: StateFlow<Song?> = _openRadioEvent.asStateFlow()
+
+    fun consumeOpenRadioEvent() {
+        _openRadioEvent.value = null
+    }
+
+    private data class ScanAndDetailTuple(
+        val isScanning: Boolean,
+        val statusMessage: String?,
+        val activeDetail: HomeDetailView?,
+        val isDiscoverRefreshing: Boolean,
+        val canUndo: Boolean
+    )
+
+    private val favoriteFlow = combine(
+        musicController.favoriteSongIds,
+        musicController.favoriteVideoIds
+    ) { songIds, videoIds -> Pair(songIds, videoIds) }
 
     private val playbackState = combine(
         musicController.currentSong,
         musicController.isPlaying,
-        musicController.isShuffleEnabled
-    ) { song, isPlaying, shuffle ->
-        Triple(song, isPlaying, shuffle)
+        musicController.isShuffleEnabled,
+        musicController.cacheUpdateTick,
+        favoriteFlow
+    ) { song, isPlaying, shuffle, cacheTick, (favSongIds, favVideoIds) ->
+        HomePlaybackState(song, isPlaying, shuffle, cacheTick, favSongIds, favVideoIds)
     }
 
     private val scanAndDetailState = combine(
         _isScanning,
         _statusMessage,
-        _activeDetail
-    ) { scanning, msg, detail ->
-        Triple(scanning, msg, detail)
+        _activeDetail,
+        _isDiscoverRefreshing,
+        _canUndo
+    ) { scanning, msg, detail, refreshing, canUndo ->
+        ScanAndDetailTuple(scanning, msg, detail, refreshing, canUndo)
     }
 
     private val mediaCollections = combine(
-        songRepository.allSongs,
+        songRepository.allPlayableSongs,
         playlistRepository.playlists,
         songRepository.favorites,
-        songRepository.albums
-    ) { allSongs, playlists, favorites, albums ->
-        HomeMediaData(allSongs, playlists, favorites, albums)
+        songRepository.albums,
+        songRepository.allSongs
+    ) { playableSongs, playlists, favorites, albums, allSongs ->
+        val pinnedIds = allSongs.mapNotNull { it.remoteVideoId }.toSet()
+        HomeMediaData(playableSongs, playlists, favorites, albums, pinnedIds)
     }
 
     private val historyData = combine(
-        songRepository.recentlyPlayed,
+        songRepository.recentlyHeard,
+        songRepository.recentlyPlayedItems,
         songRepository.forgottenFavorites
-    ) { recent, forgotten ->
-        Pair(recent, forgotten)
+    ) { recent, recentlyPlayed, forgotten ->
+        Triple(recent, recentlyPlayed, forgotten)
     }
+
+
+    private val smartMixesData = combine(
+        mediaCollections,
+        _discoverSongs
+    ) { media, discoverSongs ->
+        val mixes = generateSmartMixes(media.songs, media.favorites, discoverSongs)
+        val recentlyAdded = media.songs.sortedByDescending { it.dateAdded }.take(20)
+        Pair(mixes, recentlyAdded)
+    }.flowOn(Dispatchers.Default)
 
     private val homeStaticContent = combine(
         mediaCollections,
-        historyData
-    ) { media, (recent, forgotten) ->
-        val mixes = generateSmartMixes(media.songs, media.favorites)
-        val recentlyAdded = media.songs.sortedByDescending { it.dateAdded }.take(20)
-        HomeContentData(media, recent, recentlyAdded, forgotten, mixes)
+        historyData,
+        smartMixesData
+    ) { media, (recent, recentlyPlayed, forgotten), (mixes, recentlyAdded) ->
+        HomeContentData(media, recent, recentlyPlayed, recentlyAdded, forgotten, mixes)
     }.flowOn(Dispatchers.Default)
 
     val uiState: StateFlow<HomeUiState> = combine(
         homeStaticContent,
         playbackState,
         scanAndDetailState
-    ) { content, (currentSong, isPlaying, isShuffle), (isScanning, statusMsg, activeDetail) ->
+    ) { content, pbState, scanDetail ->
         HomeUiState(
             greeting = greeting,
             totalSongCount = content.media.songs.size,
             allSongs = content.media.songs,
-            recentlyPlayed = content.recent,
+            recentlyHeard = content.recent,
+            recentlyPlayed = content.recentlyPlayed,
             recentlyAdded = content.recentlyAdded,
+
             forgottenFavorites = content.forgotten,
             playlists = content.media.playlists,
             albums = content.media.albums,
             smartMixes = content.mixes,
             likedCount = content.media.favorites.size,
-            currentSongId = currentSong?.id,
-            isPlaying = isPlaying,
-            isShuffleEnabled = isShuffle,
+            currentSongId = pbState.currentSong?.id,
+            isPlaying = pbState.isPlaying,
+            isShuffleEnabled = pbState.isShuffleEnabled,
             isLoading = false,
-            isScanning = isScanning,
-            statusMessage = statusMsg,
-            activeDetail = activeDetail
+            isScanning = scanDetail.isScanning,
+            isDiscoverRefreshing = scanDetail.isDiscoverRefreshing,
+            statusMessage = scanDetail.statusMessage,
+            activeDetail = scanDetail.activeDetail,
+            pinnedVideoIds = content.media.pinnedVideoIds,
+            cacheUpdateTick = pbState.cacheTick,
+            canUndo = scanDetail.canUndo,
+            favoriteSongIds = pbState.favoriteSongIds,
+            favoriteVideoIds = pbState.favoriteVideoIds
         )
     }.stateIn(
         scope = viewModelScope,
@@ -195,27 +314,82 @@ class HomeViewModel @Inject constructor(
         initialValue = HomeUiState(greeting = greeting, isLoading = true)
     )
 
+    fun isSongFavorite(song: Song): Boolean = uiState.value.isFavorite(song)
+
+    fun isTrackCached(song: Song): Boolean {
+        if (song.isLocal) return true
+        return musicController.isSongCached(song)
+    }
+
     private fun generateSmartMixes(
         allSongs: List<Song>,
-        favorites: List<Song>
+        favorites: List<Song>,
+        discoverSongs: List<Song>
     ): List<SmartMix> {
         if (allSongs.isEmpty()) return emptyList()
 
         val mixes = mutableListOf<SmartMix>()
+        val now = System.currentTimeMillis()
+        val dailyCycle = now / (24L * 60L * 60L * 1000L) // 24-hour cycle seed
+        val twelveHourCycle = now / (12L * 60L * 60L * 1000L) // 12-hour cycle seed
+
+        // 1. DAILY MIX (Exactly 15 songs, rotates every 24 hours)
+        val dailyRng = kotlin.random.Random(dailyCycle)
+        val dailyTracks = allSongs.shuffled(dailyRng).take(15)
+        if (dailyTracks.isNotEmpty()) {
+            val topDailyArtists = dailyTracks.map { it.artistName }
+                .filter { it.isNotBlank() && it != "<unknown>" }
+                .distinct()
+                .take(3)
+                .joinToString(", ")
+            val dailySubtitle = if (topDailyArtists.isNotBlank()) "$topDailyArtists, and more • Refreshes every 24 hours" else "15 fresh picks • Refreshes every 24 hours"
+            mixes.add(
+                SmartMix(
+                    id = "daily_mix_1",
+                    title = "Daily Mix 1",
+                    subtitle = dailySubtitle,
+                    gradientColors = listOf(0xFF1E3264, 0xFF8D67AB),
+                    songs = dailyTracks
+                )
+            )
+        }
+
+        // 2. DISCOVER MIX (Spotify Discover style, rotates every 24 hours)
+        if (discoverSongs.size >= 5) {
+            mixes.add(
+                SmartMix(
+                    id = "discover_mix",
+                    title = "Discover",
+                    subtitle = "New music & hidden gems • Refreshes every 24 hours",
+                    gradientColors = listOf(0xFF1DB954, 0xFF004D40),
+                    songs = discoverSongs
+                )
+            )
+        }
+
+        // 3. FAVORITES MIX (Rotates every 12 hours)
+        if (favorites.size >= 7) {
+            val favRng = kotlin.random.Random(twelveHourCycle + 99)
+            mixes.add(
+                SmartMix(
+                    id = "favorites_mix",
+                    title = "Favorites Mix",
+                    subtitle = "Only the tracks you love • Refreshes every 12 hours",
+                    gradientColors = listOf(0xFF450AF5, 0xFFC4EFD9),
+                    songs = favorites.shuffled(favRng)
+                )
+            )
+        }
 
         fun getDecade(song: Song): String? {
             return MetadataClassifier.extractDecade(song.year)
         }
 
         fun getGenre(song: Song): String {
-            // Check folder path
             val folderGenre = MetadataClassifier.normalizeGenre(song.folderPath)
             if (folderGenre != "Other") return folderGenre
-
-            // Check title and artist heuristic
             val textGenre = MetadataClassifier.normalizeGenre("${song.title} ${song.artistName} ${song.albumName}")
             if (textGenre != "Other") return textGenre
-
             return "Other"
         }
 
@@ -237,7 +411,7 @@ class HomeViewModel @Inject constructor(
             }
         }
 
-        // 1. GENRE MIXES (Rock Mix, Hip-Hop Mix, Pop Mix, Electronic Mix, R&B Mix, Acoustic / Chill Mix)
+        // 4. GENRE MIXES (Top 2 genres with >= 7 songs, 12h rotation)
         val genreGroups = allSongs.groupBy { getGenre(it) }
         val genreGradients = mapOf(
             "Rock" to listOf(0xFFB71C1C, 0xFF212121),
@@ -248,11 +422,17 @@ class HomeViewModel @Inject constructor(
             "Acoustic / Chill" to listOf(0xFF2E7D32, 0xFF81C784)
         )
 
-        for ((genre, songs) in genreGroups) {
-            if (genre == "Other" || songs.isEmpty()) continue
-            val artists = songs.map { it.artistName }.filter { it.isNotBlank() && it != "<unknown>" }.distinct()
+        val eligibleGenres = genreGroups.entries
+            .filter { it.key != "Other" && it.value.size >= 7 }
+            .sortedByDescending { it.value.size }
+            .take(2)
+
+        for ((genre, songs) in eligibleGenres) {
+            val genreRng = kotlin.random.Random(twelveHourCycle + genre.hashCode())
+            val shuffled = songs.shuffled(genreRng).take(25)
+            val artists = shuffled.map { it.artistName }.filter { it.isNotBlank() && it != "<unknown>" }.distinct()
             val topArtists = artists.take(3).joinToString(", ")
-            val subtitle = if (topArtists.isNotBlank()) "$topArtists, and more" else "Your essential $genre mix"
+            val subtitle = if (topArtists.isNotBlank()) "$topArtists, and more • Refreshes every 12 hours" else "Your essential $genre mix • Refreshes every 12 hours"
             val colors = genreGradients[genre] ?: listOf(0xFF1E3264, 0xFF8D67AB)
             mixes.add(
                 SmartMix(
@@ -260,12 +440,40 @@ class HomeViewModel @Inject constructor(
                     title = "$genre Mix",
                     subtitle = subtitle,
                     gradientColors = colors,
-                    songs = songs
+                    songs = shuffled
                 )
             )
         }
 
-        // 2. DECADE MIXES (60s, 70s, 80s, 90s, 2000s, 2010s, 2020s)
+        // 5. VIBE / SOUND MIXES (Top 2 vibes with >= 7 songs, 12h rotation)
+        val vibeConfigs = listOf(
+            Triple("High Energy / Workout", "High Energy / Workout Mix", listOf(0xFFFF3D00, 0xFFFFD600)),
+            Triple("Chill / Relaxed", "Chill / Relaxed Mix", listOf(0xFF00796B, 0xFF1DB954)),
+            Triple("Focus / Ambient", "Focus / Ambient Mix", listOf(0xFF1A237E, 0xFF3949AB)),
+            Triple("Mid-Tempo Flow", "Mid-Tempo Flow Mix", listOf(0xFF4A148C, 0xFF880E4F))
+        )
+        val vibeGroups = vibeConfigs.map { (vibe, title, colors) ->
+            val vSongs = allSongs.filter { getVibe(it) == vibe }
+            Triple(title, colors, vSongs)
+        }.filter { it.third.size >= 7 }
+            .sortedByDescending { it.third.size }
+            .take(2)
+
+        for ((title, colors, vSongs) in vibeGroups) {
+            val vibeRng = kotlin.random.Random(twelveHourCycle + title.hashCode())
+            val shuffled = vSongs.shuffled(vibeRng).take(25)
+            mixes.add(
+                SmartMix(
+                    id = "vibe_${title.lowercase(Locale.ROOT).replace(" ", "_").replace("/", "_")}",
+                    title = title,
+                    subtitle = "Curated flow • Refreshes every 12 hours",
+                    gradientColors = colors,
+                    songs = shuffled
+                )
+            )
+        }
+
+        // 6. DECADE MIXES (Pruned: Top 1 prominent decade with >= 7 songs, 12h rotation)
         val decadeGroups = allSongs.filter { getDecade(it) != null }.groupBy { getDecade(it)!! }
         val decadeLabels = mapOf(
             "50s" to "50s",
@@ -287,13 +495,18 @@ class HomeViewModel @Inject constructor(
             "60s" to listOf(0xFF450AF5, 0xFFBA5A31)
         )
 
-        val sortedDecades = decadeGroups.keys.sortedDescending()
-        for (decade in sortedDecades) {
-            val songs = decadeGroups[decade] ?: continue
+        val eligibleDecades = decadeGroups.entries
+            .filter { it.value.size >= 7 }
+            .sortedByDescending { it.value.size }
+            .take(1) // Prune bloat: show top 1 decade mix per cycle
+
+        for ((decade, dSongs) in eligibleDecades) {
+            val dRng = kotlin.random.Random(twelveHourCycle + decade.hashCode())
+            val shuffled = dSongs.shuffled(dRng).take(25)
             val label = decadeLabels[decade] ?: decade
-            val artists = songs.map { it.artistName }.filter { it.isNotBlank() && it != "<unknown>" }.distinct()
+            val artists = shuffled.map { it.artistName }.filter { it.isNotBlank() && it != "<unknown>" }.distinct()
             val topArtists = artists.take(3).joinToString(", ")
-            val subtitle = if (topArtists.isNotBlank()) "$topArtists, and more" else "The greatest hits of the $label"
+            val subtitle = if (topArtists.isNotBlank()) "$topArtists, and more • Refreshes every 12 hours" else "The greatest hits of the $label • Refreshes every 12 hours"
             val colors = decadeGradients[decade] ?: listOf(0xFF1E3264, 0xFF8D67AB)
             mixes.add(
                 SmartMix(
@@ -301,118 +514,114 @@ class HomeViewModel @Inject constructor(
                     title = "$label Mix",
                     subtitle = subtitle,
                     gradientColors = colors,
-                    songs = songs
-                )
-            )
-        }
-
-        // 3. VIBE / SOUND MIXES
-        // High Energy / Workout
-        val workoutSongs = allSongs.filter { getVibe(it) == "High Energy / Workout" }
-        if (workoutSongs.isNotEmpty()) {
-            mixes.add(
-                SmartMix(
-                    id = "vibe_workout",
-                    title = "High Energy / Workout Mix",
-                    subtitle = "Fast tempos and high-energy bangers to push your limits",
-                    gradientColors = listOf(0xFFFF3D00, 0xFFFFD600),
-                    songs = workoutSongs
-                )
-            )
-        }
-
-        // Chill / Relaxed
-        val chillSongs = allSongs.filter { getVibe(it) == "Chill / Relaxed" }
-        if (chillSongs.isNotEmpty()) {
-            mixes.add(
-                SmartMix(
-                    id = "vibe_chill",
-                    title = "Chill / Relaxed Mix",
-                    subtitle = "Mellow rhythms and peaceful vibes to unwind",
-                    gradientColors = listOf(0xFF00796B, 0xFF1DB954),
-                    songs = chillSongs
-                )
-            )
-        }
-
-        // Focus / Ambient
-        val focusSongs = allSongs.filter { getVibe(it) == "Focus / Ambient" }
-        if (focusSongs.isNotEmpty()) {
-            mixes.add(
-                SmartMix(
-                    id = "vibe_focus",
-                    title = "Focus / Ambient Mix",
-                    subtitle = "Low-energy soundscapes and flow-state music",
-                    gradientColors = listOf(0xFF1A237E, 0xFF3949AB),
-                    songs = focusSongs
-                )
-            )
-        }
-
-        // Mid-Tempo Flow
-        val flowSongs = allSongs.filter { getVibe(it) == "Mid-Tempo Flow" }
-        if (flowSongs.isNotEmpty()) {
-            mixes.add(
-                SmartMix(
-                    id = "vibe_flow",
-                    title = "Mid-Tempo Flow Mix",
-                    subtitle = "Steady grooves and everyday rotation",
-                    gradientColors = listOf(0xFF4A148C, 0xFF880E4F),
-                    songs = flowSongs
-                )
-            )
-        }
-
-        // 4. DAILY MIXES & PERSONALIZED FAVORITES
-        val artists = allSongs.map { it.artistName }.filter { it.isNotBlank() && it != "<unknown>" }.distinct()
-        val topArtistsStr = artists.take(3).joinToString(", ")
-        mixes.add(
-            SmartMix(
-                id = "daily_mix_1",
-                title = "Daily Mix 1",
-                subtitle = if (topArtistsStr.isNotBlank()) "$topArtistsStr, and more" else "Curated for your day",
-                gradientColors = listOf(0xFF1E3264, 0xFF8D67AB),
-                songs = allSongs.shuffled(kotlin.random.Random(42))
-            )
-        )
-
-        val topPlayed = allSongs.sortedByDescending { it.playCount }.take(25)
-        if (topPlayed.any { it.playCount > 0 }) {
-            mixes.add(
-                SmartMix(
-                    id = "heavy_rotation",
-                    title = "Heavy Rotation",
-                    subtitle = "Your most played tracks on repeat",
-                    gradientColors = listOf(0xFFBA5A31, 0xFFE8115B),
-                    songs = topPlayed
-                )
-            )
-        }
-
-        if (favorites.isNotEmpty()) {
-            mixes.add(
-                SmartMix(
-                    id = "favorites_mix",
-                    title = "Favorites Mix",
-                    subtitle = "Only the offline tracks you love",
-                    gradientColors = listOf(0xFF450AF5, 0xFFC4EFD9),
-                    songs = favorites
+                    songs = shuffled
                 )
             )
         }
 
         return mixes
-            .filter { it.songs.size >= 7 }
-            .sortedByDescending { it.songs.size }
     }
 
     fun onIntent(intent: HomeIntent) {
         when (intent) {
             is HomeIntent.PlaySong -> {
-                musicController.playQueue(intent.queue, intent.queue.indexOfFirst { it.id == intent.song.id }.coerceAtLeast(0))
+                val context = when (val detail = _activeDetail.value) {
+                    is HomeDetailView.PlaylistDetail -> {
+                        val isGenMix = detail.playlist.id < 0
+                        PlaybackContext(
+                            title = detail.playlist.name,
+                            type = PlaybackContextType.PLAYLIST,
+                            id = if (isGenMix) (activeGenMixId ?: "genmix_${System.currentTimeMillis()}") else detail.playlist.id.toString(),
+                            playlistId = if (isGenMix) null else detail.playlist.id,
+                            isLocalOrSaved = !isGenMix,
+                            artworkUri = detail.playlist.customCoverUri
+                        )
+                    }
+                    is HomeDetailView.AlbumDetail -> PlaybackContext(
+                        title = detail.album.title,
+                        type = PlaybackContextType.ALBUM,
+                        id = detail.album.id.toString(),
+                        albumId = detail.album.id,
+                        artistName = detail.album.artist,
+                        isLocalOrSaved = true
+                    )
+                    is HomeDetailView.ArtistDetail -> PlaybackContext(
+                        title = detail.artist.name,
+                        type = PlaybackContextType.ARTIST,
+                        id = detail.artist.id.toString(),
+                        artistName = detail.artist.name,
+                        isLocalOrSaved = true
+                    )
+                    is HomeDetailView.MixDetail -> PlaybackContext(
+                        title = detail.mix.title,
+                        type = PlaybackContextType.MIX,
+                        id = detail.mix.id,
+                        isLocalOrSaved = false
+                    )
+                    is HomeDetailView.LikedSongsDetail -> PlaybackContext(
+                        title = "Liked Songs",
+                        type = PlaybackContextType.PLAYLIST,
+                        id = "liked",
+                        isLocalOrSaved = true
+                    )
+                    else -> PlaybackContext(
+                        title = intent.song.title,
+                        type = PlaybackContextType.LIBRARY,
+                        id = intent.song.contentUri,
+                        artworkUri = intent.song.artworkUri,
+                        artistName = intent.song.artistName,
+                        isLocalOrSaved = intent.song.isLocal
+                    )
+                }
+                musicController.playQueue(
+                    intent.queue,
+                    intent.queue.indexOfFirst { it.id == intent.song.id || it.contentUri == intent.song.contentUri }.coerceAtLeast(0),
+                    context = context
+                )
             }
             is HomeIntent.PlayAll -> {
-                musicController.playQueue(intent.songs, intent.startIndex.coerceAtLeast(0))
+                val context = when (val detail = _activeDetail.value) {
+                    is HomeDetailView.PlaylistDetail -> {
+                        val isGenMix = detail.playlist.id < 0
+                        PlaybackContext(
+                            title = detail.playlist.name,
+                            type = PlaybackContextType.PLAYLIST,
+                            id = if (isGenMix) (activeGenMixId ?: "genmix_${System.currentTimeMillis()}") else detail.playlist.id.toString(),
+                            playlistId = if (isGenMix) null else detail.playlist.id,
+                            isLocalOrSaved = !isGenMix,
+                            artworkUri = detail.playlist.customCoverUri
+                        )
+                    }
+                    is HomeDetailView.AlbumDetail -> PlaybackContext(
+                        title = detail.album.title,
+                        type = PlaybackContextType.ALBUM,
+                        id = detail.album.id.toString(),
+                        albumId = detail.album.id,
+                        artistName = detail.album.artist,
+                        isLocalOrSaved = true
+                    )
+                    is HomeDetailView.ArtistDetail -> PlaybackContext(
+                        title = detail.artist.name,
+                        type = PlaybackContextType.ARTIST,
+                        id = detail.artist.id.toString(),
+                        artistName = detail.artist.name,
+                        isLocalOrSaved = true
+                    )
+                    is HomeDetailView.MixDetail -> PlaybackContext(
+                        title = detail.mix.title,
+                        type = PlaybackContextType.MIX,
+                        id = detail.mix.id,
+                        isLocalOrSaved = false
+                    )
+                    is HomeDetailView.LikedSongsDetail -> PlaybackContext(
+                        title = "Liked Songs",
+                        type = PlaybackContextType.PLAYLIST,
+                        id = "liked",
+                        isLocalOrSaved = true
+                    )
+                    else -> null
+                }
+                musicController.playQueue(intent.songs, intent.startIndex.coerceAtLeast(0), context = context)
             }
             is HomeIntent.ToggleShuffle -> {
                 handleToggleShuffle(intent.songs)
@@ -437,9 +646,41 @@ class HomeViewModel @Inject constructor(
             }
             is HomeIntent.OpenAlbum -> {
                 detailJob?.cancel()
+                val initialAlbum = intent.album
+                _activeDetail.value = HomeDetailView.AlbumDetail(
+                    album = initialAlbum,
+                    songs = emptyList(),
+                    albumProfile = AlbumProfile(album = initialAlbum, tracks = emptyList(), isLoading = true)
+                )
+
                 detailJob = viewModelScope.launch {
-                    songRepository.getSongsByAlbum(intent.album.id).collect { songs ->
-                        _activeDetail.value = HomeDetailView.AlbumDetail(intent.album, songs)
+                    val isSavedLocally = SongRepository.isStreamingAlbumSaved(intent.album, emptyList(), uiState.value.allSongs)
+                    val profile = if (intent.album.id != 0L && (intent.album.playlistUrl.isNullOrBlank() || isSavedLocally)) {
+                        runCatching { songRepository.getAlbumProfile(intent.album.id).firstOrNull() }.getOrNull()
+                    } else null
+
+                    if (profile != null && profile.tracks.isNotEmpty() &&
+                        SongRepository.isStreamingAlbumSaved(profile.album, profile.tracks, uiState.value.allSongs)
+                    ) {
+                        _activeDetail.value = HomeDetailView.AlbumDetail(profile.album, profile.tracks, profile.copy(isLoading = false))
+                    } else {
+                        val remote = remoteMusicRepository.getRemoteAlbumProfile(
+                            albumTitle = intent.album.title,
+                            artistName = intent.album.artist,
+                            artworkUri = intent.album.artworkUri,
+                            playlistUrl = intent.album.playlistUrl
+                        ).getOrNull()
+                        if (remote != null && remote.tracks.isNotEmpty()) {
+                            _activeDetail.value = HomeDetailView.AlbumDetail(remote.album, remote.tracks, remote.copy(isLoading = false))
+                        } else if (profile != null && profile.tracks.isNotEmpty()) {
+                            _activeDetail.value = HomeDetailView.AlbumDetail(profile.album, profile.tracks, profile.copy(isLoading = false))
+                        } else {
+                            _activeDetail.value = HomeDetailView.AlbumDetail(
+                                intent.album,
+                                emptyList(),
+                                AlbumProfile(intent.album, emptyList(), isLoading = false)
+                            )
+                        }
                     }
                 }
             }
@@ -461,25 +702,115 @@ class HomeViewModel @Inject constructor(
             }
             is HomeIntent.PlayMix -> {
                 if (intent.mix.songs.isNotEmpty()) {
-                    musicController.playQueue(intent.mix.songs, 0)
+                    val context = PlaybackContext(
+                        title = intent.mix.title,
+                        type = PlaybackContextType.MIX,
+                        id = intent.mix.id,
+                        isLocalOrSaved = false
+                    )
+                    musicController.playQueue(intent.mix.songs, 0, context = context)
                 }
             }
             is HomeIntent.PlayPlaylist -> {
                 viewModelScope.launch {
                     val songs = playlistRepository.getPlaylistSongs(intent.playlist.id).first()
                     if (songs.isNotEmpty()) {
-                        musicController.playQueue(songs, 0)
+                        val context = PlaybackContext(
+                            title = intent.playlist.name,
+                            type = PlaybackContextType.PLAYLIST,
+                            id = intent.playlist.id.toString(),
+                            playlistId = intent.playlist.id,
+                            isLocalOrSaved = true
+                        )
+                        musicController.playQueue(songs, 0, context = context)
                     }
                 }
             }
             is HomeIntent.ToggleFavorite -> {
-                musicController.toggleFavorite(intent.song)
+                val song = intent.song
+                val willBeFav = !isSongFavorite(song)
+                musicController.toggleFavorite(song)
+
+                _activeDetail.value?.let { detail ->
+                    when (detail) {
+                        is HomeDetailView.AlbumDetail -> {
+                            val updatedTracks = detail.albumProfile?.tracks?.map {
+                                if (it.id == song.id || (song.remoteVideoId != null && it.remoteVideoId == song.remoteVideoId)) {
+                                    it.copy(isFavorite = willBeFav)
+                                } else it
+                            }
+                            val updatedSongs = detail.songs.map {
+                                if (it.id == song.id || (song.remoteVideoId != null && it.remoteVideoId == song.remoteVideoId)) {
+                                    it.copy(isFavorite = willBeFav)
+                                } else it
+                            }
+                            _activeDetail.value = detail.copy(
+                                songs = updatedSongs,
+                                albumProfile = detail.albumProfile?.copy(tracks = updatedTracks ?: detail.albumProfile.tracks)
+                            )
+                        }
+                        is HomeDetailView.ArtistDetail -> {
+                            val updatedTop = detail.artistProfile?.topSongs?.map {
+                                if (it.id == song.id || (song.remoteVideoId != null && it.remoteVideoId == song.remoteVideoId)) {
+                                    it.copy(isFavorite = willBeFav)
+                                } else it
+                            }
+                            val updatedFeatured = detail.artistProfile?.featuredIn?.map {
+                                if (it.id == song.id || (song.remoteVideoId != null && it.remoteVideoId == song.remoteVideoId)) {
+                                    it.copy(isFavorite = willBeFav)
+                                } else it
+                            }
+                            val updatedSongs = detail.songs.map {
+                                if (it.id == song.id || (song.remoteVideoId != null && it.remoteVideoId == song.remoteVideoId)) {
+                                    it.copy(isFavorite = willBeFav)
+                                } else it
+                            }
+                            _activeDetail.value = detail.copy(
+                                songs = updatedSongs,
+                                artistProfile = detail.artistProfile?.copy(
+                                    topSongs = updatedTop ?: detail.artistProfile.topSongs,
+                                    featuredIn = updatedFeatured ?: detail.artistProfile.featuredIn
+                                )
+                            )
+                        }
+                        is HomeDetailView.PlaylistDetail -> {
+                            val updatedSongs = detail.songs.map {
+                                if (it.id == song.id || (song.remoteVideoId != null && it.remoteVideoId == song.remoteVideoId)) {
+                                    it.copy(isFavorite = willBeFav)
+                                } else it
+                            }
+                            _activeDetail.value = detail.copy(songs = updatedSongs)
+                        }
+                        is HomeDetailView.LikedSongsDetail -> {
+                            val updatedSongs = detail.songs.map {
+                                if (it.id == song.id || (song.remoteVideoId != null && it.remoteVideoId == song.remoteVideoId)) {
+                                    it.copy(isFavorite = willBeFav)
+                                } else it
+                            }
+                            _activeDetail.value = detail.copy(songs = updatedSongs)
+                        }
+                        is HomeDetailView.MixDetail -> {
+                            val updatedSongs = detail.songs.map {
+                                if (it.id == song.id || (song.remoteVideoId != null && it.remoteVideoId == song.remoteVideoId)) {
+                                    it.copy(isFavorite = willBeFav)
+                                } else it
+                            }
+                            _activeDetail.value = detail.copy(songs = updatedSongs)
+                        }
+                    }
+                }
             }
             is HomeIntent.PlayLikedSongs -> {
                 viewModelScope.launch {
                     val favorites = songRepository.favorites.first()
                     if (favorites.isNotEmpty()) {
-                        musicController.playQueue(favorites, 0)
+                        val context = PlaybackContext(
+                            title = "Liked Songs",
+                            type = PlaybackContextType.PLAYLIST,
+                            id = "liked",
+                            isLocalOrSaved = true
+                        )
+                        musicController.playQueue(favorites, 0, context = context)
                     }
                 }
             }
@@ -539,8 +870,35 @@ class HomeViewModel @Inject constructor(
                     _statusMessage.value = "Added to playlist"
                 }
             }
+            is HomeIntent.AddSongObjectToPlaylist -> {
+                viewModelScope.launch {
+                    val resolvedSong = playlistRepository.addSongObjectToPlaylist(intent.playlistId, intent.song)
+                    if (resolvedSong.isRemoteStream && !musicController.isSongCached(resolvedSong)) {
+                        musicController.downloadSongForOffline(resolvedSong)
+                    }
+                    _statusMessage.value = "Added to playlist"
+                }
+            }
+            is HomeIntent.CreatePlaylistAndAddSong -> {
+                viewModelScope.launch {
+                    val trimmed = intent.name.trim()
+                    if (trimmed.isNotEmpty()) {
+                        val newId = playlistRepository.createPlaylist(trimmed, intent.song.artworkUri)
+                        val resolvedSong = playlistRepository.addSongObjectToPlaylist(newId, intent.song)
+                        if (resolvedSong.isRemoteStream && !musicController.isSongCached(resolvedSong)) {
+                            musicController.downloadSongForOffline(resolvedSong)
+                        }
+                        _statusMessage.value = "Created and added to '$trimmed'"
+                    }
+                }
+            }
             is HomeIntent.RemoveSongFromPlaylist -> {
                 viewModelScope.launch {
+                    val song = songRepository.getSongByIdSync(intent.songId)
+                    if (song != null) {
+                        lastRemovedPlaylistSong = Pair(intent.playlistId, song)
+                        _canUndo.value = true
+                    }
                     playlistRepository.removeSongFromPlaylist(intent.playlistId, intent.songId)
                     songRepository.deleteNonFavoriteRemoteSongs()
                     musicController.pruneOrphanedCache()
@@ -550,6 +908,21 @@ class HomeViewModel @Inject constructor(
             is HomeIntent.ReorderPlaylist -> {
                 viewModelScope.launch {
                     playlistRepository.reorderPlaylist(intent.playlistId, intent.orderedSongIds)
+                }
+            }
+            is HomeIntent.SavePlaylistToLibrary -> {
+                viewModelScope.launch {
+                    val trimmed = intent.name.trim().ifEmpty { "Generated Playlist" }
+                    val coverUri = intent.songs.firstOrNull { !it.artworkUri.isNullOrBlank() }?.artworkUri
+                    val newId = playlistRepository.createPlaylist(trimmed, coverUri)
+                    intent.songs.forEach { song ->
+                        playlistRepository.addSongObjectToPlaylist(newId, song)
+                    }
+                    val savedPlaylist = playlistRepository.getPlaylistById(newId).firstOrNull()
+                        ?: Playlist(id = newId, name = trimmed, createdAt = System.currentTimeMillis(), customCoverUri = coverUri, songCount = intent.songs.size)
+                    activeGenMixId = null
+                    _activeDetail.value = HomeDetailView.PlaylistDetail(savedPlaylist, intent.songs)
+                    _statusMessage.value = "Saved '$trimmed' to library"
                 }
             }
             is HomeIntent.Rescan -> {
@@ -565,7 +938,404 @@ class HomeViewModel @Inject constructor(
                     }
                 }
             }
-            is HomeIntent.DismissStatusMessage -> _statusMessage.value = null
+            is HomeIntent.RefreshDiscoverMix -> {
+                if (_isDiscoverRefreshing.value) return
+                viewModelScope.launch {
+                    _isDiscoverRefreshing.value = true
+                    try {
+                        val playable = songRepository.allPlayableSongs.first()
+                        val songs = discoverRecommendationEngine.getOrRefreshDiscoverMix(playable, forceRefresh = true)
+                        if (songs.isNotEmpty()) {
+                            _discoverSongs.value = songs
+                            val currentDetail = _activeDetail.value
+                            if (currentDetail is HomeDetailView.MixDetail && currentDetail.mix.id == "discover_mix") {
+                                val updatedMix = currentDetail.mix.copy(songs = songs)
+                                _activeDetail.value = HomeDetailView.MixDetail(updatedMix, songs)
+                            }
+                            _statusMessage.value = "Discover Mix refreshed with ${songs.size} new tracks"
+                        } else {
+                            _statusMessage.value = "Couldn't refresh Discover Mix. Check your network connection."
+                        }
+                    } catch (e: Exception) {
+                        _statusMessage.value = "Refresh failed: ${e.localizedMessage ?: "Unknown error"}"
+                    } finally {
+                        _isDiscoverRefreshing.value = false
+                    }
+                }
+            }
+            is HomeIntent.DismissStatusMessage -> {
+                _statusMessage.value = null
+                _canUndo.value = false
+                lastRemovedPlaylistSong = null
+            }
+            is HomeIntent.UndoDelete -> {
+                viewModelScope.launch {
+                    val plSong = lastRemovedPlaylistSong
+                    if (plSong != null) {
+                        val (playlistId, song) = plSong
+                        songRepository.upsertSongs(listOf(song))
+                        playlistRepository.addSongObjectToPlaylist(playlistId, song)
+                        if (song.isRemoteStream && !musicController.isSongCached(song)) {
+                            musicController.downloadSongForOffline(song)
+                        }
+                        _statusMessage.value = "Restored '${song.title}' to playlist"
+                        lastRemovedPlaylistSong = null
+                        _canUndo.value = false
+                    }
+                }
+            }
+            is HomeIntent.OpenArtist -> {
+                detailJob?.cancel()
+                detailJob = viewModelScope.launch {
+                    val localProfile = runCatching { songRepository.getArtistProfile(intent.artist.id).firstOrNull() }.getOrNull()
+                    if (localProfile != null) {
+                        _activeDetail.value = HomeDetailView.ArtistDetail(
+                            localProfile.artist,
+                            localProfile.topSongs,
+                            localProfile.copy(isLoading = true)
+                        )
+                    } else {
+                        _activeDetail.value = HomeDetailView.ArtistDetail(
+                            intent.artist,
+                            emptyList(),
+                            ArtistProfile(intent.artist, isLoading = true)
+                        )
+                    }
+                    val remote = remoteMusicRepository.getRemoteArtistProfile(
+                        artistName = intent.artist.name,
+                        channelUrl = intent.artist.channelUrl,
+                        avatarUrl = intent.artist.avatarUrl
+                    ).getOrNull()
+                    if (remote != null) {
+                        _activeDetail.value = HomeDetailView.ArtistDetail(
+                            remote.artist.copy(
+                                id = intent.artist.id,
+                                avatarUrl = remote.artist.avatarUrl ?: intent.artist.avatarUrl
+                            ),
+                            remote.topSongs,
+                            remote.copy(
+                                artist = remote.artist.copy(
+                                    id = intent.artist.id,
+                                    avatarUrl = remote.artist.avatarUrl ?: intent.artist.avatarUrl
+                                ),
+                                isLoading = false
+                            )
+                        )
+                    } else if (localProfile != null) {
+                        _activeDetail.value = HomeDetailView.ArtistDetail(
+                            localProfile.artist.copy(
+                                id = intent.artist.id,
+                                avatarUrl = localProfile.artist.avatarUrl ?: intent.artist.avatarUrl
+                            ),
+                            localProfile.topSongs,
+                            localProfile.copy(
+                                artist = localProfile.artist.copy(
+                                    id = intent.artist.id,
+                                    avatarUrl = localProfile.artist.avatarUrl ?: intent.artist.avatarUrl
+                                ),
+                                isLoading = false
+                            )
+                        )
+                    } else {
+                        _activeDetail.value = HomeDetailView.ArtistDetail(
+                            intent.artist,
+                            emptyList(),
+                            ArtistProfile(intent.artist, isLoading = false)
+                        )
+                    }
+                }
+            }
+            is HomeIntent.OpenArtistByName -> {
+                val cleanName = com.mousikify.core.model.cleanArtistName(intent.artistName)
+                detailJob?.cancel()
+                val fallbackArtwork = uiState.value.allSongs.firstOrNull {
+                    it.cleanArtistName.equals(cleanName, ignoreCase = true) && !it.artworkUri.isNullOrBlank()
+                }?.artworkUri ?: uiState.value.recentlyHeard.firstOrNull {
+                    it.cleanArtistName.equals(cleanName, ignoreCase = true) && !it.artworkUri.isNullOrBlank()
+                }?.artworkUri
+                detailJob = viewModelScope.launch {
+                    val localProfile = runCatching { songRepository.getArtistProfileByName(cleanName).firstOrNull() }.getOrNull()
+                    val initialArtist = (localProfile?.artist ?: Artist(
+                        id = cleanName.hashCode().toLong(),
+                        name = cleanName,
+                        songCount = 0
+                    )).let { it.copy(avatarUrl = it.avatarUrl ?: fallbackArtwork) }
+
+                    if (localProfile != null) {
+                        _activeDetail.value = HomeDetailView.ArtistDetail(
+                            initialArtist,
+                            localProfile.topSongs,
+                            localProfile.copy(artist = initialArtist, isLoading = true)
+                        )
+                    } else {
+                        _activeDetail.value = HomeDetailView.ArtistDetail(
+                            initialArtist,
+                            emptyList(),
+                            ArtistProfile(initialArtist, isLoading = true)
+                        )
+                    }
+                    val remote = remoteMusicRepository.getRemoteArtistProfile(
+                        artistName = cleanName,
+                        channelUrl = initialArtist.channelUrl,
+                        avatarUrl = initialArtist.avatarUrl
+                    ).getOrNull()
+                    if (remote != null) {
+                        _activeDetail.value = HomeDetailView.ArtistDetail(
+                            remote.artist.copy(
+                                id = initialArtist.id,
+                                avatarUrl = remote.artist.avatarUrl ?: initialArtist.avatarUrl
+                            ),
+                            remote.topSongs,
+                            remote.copy(
+                                artist = remote.artist.copy(
+                                    id = initialArtist.id,
+                                    avatarUrl = remote.artist.avatarUrl ?: initialArtist.avatarUrl
+                                ),
+                                isLoading = false
+                            )
+                        )
+                    } else if (localProfile != null) {
+                        _activeDetail.value = HomeDetailView.ArtistDetail(
+                            initialArtist,
+                            localProfile.topSongs,
+                            localProfile.copy(artist = initialArtist, isLoading = false)
+                        )
+                    } else {
+                        _activeDetail.value = HomeDetailView.ArtistDetail(
+                            initialArtist,
+                            emptyList(),
+                            ArtistProfile(initialArtist, isLoading = false)
+                        )
+                    }
+                }
+            }
+            is HomeIntent.OpenAlbumByName -> {
+                detailJob?.cancel()
+                val cleanArtist = intent.artistName.trim()
+                val cleanTitle = intent.albumTitle.trim()
+                val local = uiState.value.albums.firstOrNull {
+                    it.title.equals(cleanTitle, ignoreCase = true) &&
+                    (cleanArtist.isBlank() || it.artist.contains(cleanArtist, ignoreCase = true) || cleanArtist.contains(it.artist, ignoreCase = true))
+                }
+                if (local != null) {
+                    onIntent(HomeIntent.OpenAlbum(local))
+                } else {
+                    val placeholderAlbum = Album(
+                        id = "$cleanArtist-$cleanTitle".hashCode().toLong(),
+                        title = cleanTitle,
+                        artist = cleanArtist,
+                        artistId = cleanArtist.hashCode().toLong(),
+                        songCount = 0,
+                        year = 0,
+                        artworkUri = intent.artworkUri,
+                        playlistUrl = intent.playlistUrl
+                    )
+                    _activeDetail.value = HomeDetailView.AlbumDetail(
+                        placeholderAlbum,
+                        emptyList(),
+                        AlbumProfile(placeholderAlbum, emptyList(), isLoading = true)
+                    )
+
+                    detailJob = viewModelScope.launch {
+                        val remote = remoteMusicRepository.getRemoteAlbumProfile(
+                            albumTitle = cleanTitle,
+                            artistName = cleanArtist,
+                            artworkUri = intent.artworkUri,
+                            playlistUrl = intent.playlistUrl
+                        ).getOrNull()
+                        if (remote != null) {
+                            _activeDetail.value = HomeDetailView.AlbumDetail(remote.album, remote.tracks, remote.copy(isLoading = false))
+                        } else {
+                            _activeDetail.value = HomeDetailView.AlbumDetail(
+                                placeholderAlbum,
+                                emptyList(),
+                                AlbumProfile(placeholderAlbum, emptyList(), isLoading = false)
+                            )
+                        }
+                    }
+                }
+            }
+            is HomeIntent.PlayNext -> musicController.playNext(intent.song)
+            is HomeIntent.AddToQueue -> musicController.addToQueue(intent.song)
+            is HomeIntent.StartRadio -> musicController.startRadio(intent.song)
+            is HomeIntent.StartArtistRadio -> musicController.startArtistRadio(intent.artistName)
+            is HomeIntent.OpenRecentlyPlayed -> handleOpenRecentlyPlayed(intent.item)
+        }
+    }
+
+    private fun handleOpenRecentlyPlayed(item: RecentlyPlayedItem) {
+        when (item.type) {
+            RecentlyPlayedType.TRACK -> {
+                val allSongs = uiState.value.allSongs
+                val song = item.song
+                    ?: allSongs.firstOrNull { it.contentUri == item.referenceId.removePrefix("track_") || it.id.toString() == item.referenceId.removePrefix("track_") }
+                if (song != null) {
+                    val context = PlaybackContext(
+                        title = song.title,
+                        type = PlaybackContextType.LIBRARY,
+                        artworkUri = song.artworkUri
+                    )
+                    musicController.playSong(song, context)
+                } else {
+                    val uri = item.referenceId.removePrefix("track_")
+                    val virtualSong = Song(
+                        id = item.id.let { if (it > 0) -it else it },
+                        contentUri = uri,
+                        title = item.title,
+                        artistId = 0L,
+                        artistName = item.subtitle.removePrefix("Song • ").trim(),
+                        albumId = 0L,
+                        albumName = "",
+                        durationMs = 0L,
+                        trackNumber = 0,
+                        year = 0,
+                        folderPath = "",
+                        dateAdded = 0L,
+                        dateModified = 0L,
+                        artworkUri = item.artworkUri
+                    )
+                    val context = PlaybackContext(
+                        title = virtualSong.title,
+                        type = PlaybackContextType.LIBRARY,
+                        artworkUri = virtualSong.artworkUri
+                    )
+                    musicController.playSong(virtualSong, context)
+                }
+            }
+            RecentlyPlayedType.ALBUM -> {
+                val cleanArtist = item.subtitle.removePrefix("Album • ").trim()
+                val local = uiState.value.albums.firstOrNull {
+                    it.title.equals(item.title, ignoreCase = true) &&
+                    (cleanArtist.isBlank() || it.artist.contains(cleanArtist, ignoreCase = true) || cleanArtist.contains(it.artist, ignoreCase = true))
+                }
+                if (local != null) {
+                    onIntent(HomeIntent.OpenAlbum(local))
+                } else {
+                    onIntent(HomeIntent.OpenAlbumByName(
+                        albumTitle = item.title,
+                        artistName = cleanArtist,
+                        playlistUrl = item.remotePlaylistUrl,
+                        artworkUri = item.artworkUri
+                    ))
+                }
+            }
+            RecentlyPlayedType.PLAYLIST -> {
+                if (item.referenceId == "playlist_liked" || item.title.equals("Liked Songs", ignoreCase = true)) {
+                    onIntent(HomeIntent.OpenLikedSongs)
+                    return
+                }
+
+                val refPlaylistId = item.referenceId.removePrefix("playlist_").toLongOrNull()
+                val savedPlaylist = item.playlist
+                    ?: uiState.value.playlists.firstOrNull {
+                        (refPlaylistId != null && it.id == refPlaylistId) || it.name.equals(item.title, ignoreCase = true)
+                    }
+                if (savedPlaylist != null) {
+                    onIntent(HomeIntent.OpenPlaylist(savedPlaylist))
+                    return
+                }
+
+                val isGeneratedMix = item.referenceId.startsWith("genmix_")
+                if (isGeneratedMix) {
+                    detailJob?.cancel()
+                    detailJob = viewModelScope.launch {
+                        _isScanning.value = true
+                        val cachedTracks = songRepository.getCachedGeneratedMix(item.referenceId)
+                        _isScanning.value = false
+                        if (!cachedTracks.isNullOrEmpty()) {
+                            activeGenMixId = item.referenceId
+                            val mixPlaylist = Playlist(
+                                id = -kotlin.math.abs(item.referenceId.hashCode().toLong()).coerceAtLeast(1L),
+                                name = item.title,
+                                createdAt = item.playedAt,
+                                customCoverUri = item.artworkUri ?: cachedTracks.firstOrNull()?.artworkUri,
+                                songCount = cachedTracks.size
+                            )
+                            _activeDetail.value = HomeDetailView.PlaylistDetail(mixPlaylist, cachedTracks)
+                        } else {
+                            _statusMessage.value = "Generated playlist expired or not found"
+                        }
+                    }
+                    return
+                }
+
+                val isRadio = item.referenceId.startsWith("radio_") || item.subtitle.startsWith("Song Radio")
+                if (isRadio) {
+                    val seed = item.song ?: Song(
+                        id = item.id.let { if (it > 0) -it else it },
+                        contentUri = if (item.referenceId.startsWith("radio_")) item.referenceId.removePrefix("radio_") else "",
+                        title = item.title.removeSuffix(" Radio").trim(),
+                        artistId = 0L,
+                        artistName = item.subtitle.removePrefix("Song Radio • ").trim(),
+                        albumId = 0L,
+                        albumName = "",
+                        durationMs = 0L,
+                        trackNumber = 0,
+                        year = 0,
+                        folderPath = "",
+                        dateAdded = 0L,
+                        dateModified = 0L,
+                        artworkUri = item.artworkUri
+                    )
+                    _openRadioEvent.value = seed
+                    return
+                }
+
+                val isCommunity = item.referenceId.startsWith("remote_") ||
+                    item.subtitle.contains("Community", ignoreCase = true) ||
+                    !item.remotePlaylistUrl.isNullOrBlank()
+
+                val rawUrl = item.remotePlaylistUrl
+                    ?: if (item.referenceId.startsWith("remote_")) item.referenceId.removePrefix("remote_") else null
+
+                val rUrl = rawUrl?.let {
+                    if (it.startsWith("http")) it else "https://music.youtube.com/playlist?list=$it"
+                }
+
+                if (isCommunity && !rUrl.isNullOrBlank()) {
+                    detailJob?.cancel()
+                    detailJob = viewModelScope.launch {
+                        _isScanning.value = true
+                        val result = remoteMusicRepository.getPlaylistTracks(rUrl)
+                        _isScanning.value = false
+                        result.onSuccess { tracks ->
+                            val playlist = Playlist(
+                                id = -(rUrl.hashCode().toLong().let { if (it < 0) -it else it }),
+                                name = item.title,
+                                createdAt = item.playedAt,
+                                customCoverUri = item.artworkUri,
+                                songCount = tracks.size
+                            )
+                            _activeDetail.value = HomeDetailView.PlaylistDetail(playlist, tracks)
+                        }
+                    }
+                } else {
+                    val localPlaylist = item.playlist
+                        ?: uiState.value.playlists.firstOrNull {
+                            it.name.equals(item.title, ignoreCase = true)
+                        }
+                    if (localPlaylist != null) {
+                        onIntent(HomeIntent.OpenPlaylist(localPlaylist))
+                    } else if (!rUrl.isNullOrBlank()) {
+                        detailJob?.cancel()
+                        detailJob = viewModelScope.launch {
+                            _isScanning.value = true
+                            val result = remoteMusicRepository.getPlaylistTracks(rUrl)
+                            _isScanning.value = false
+                            result.onSuccess { tracks ->
+                                val playlist = Playlist(
+                                    id = -(rUrl.hashCode().toLong().let { if (it < 0) -it else it }),
+                                    name = item.title,
+                                    createdAt = item.playedAt,
+                                    customCoverUri = item.artworkUri,
+                                    songCount = tracks.size
+                                )
+                                _activeDetail.value = HomeDetailView.PlaylistDetail(playlist, tracks)
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -581,7 +1351,48 @@ class HomeViewModel @Inject constructor(
                 } else {
                     musicController.setShuffleEnabled(true)
                     val startIndex = songs.indices.random()
-                    musicController.playQueue(songs, startIndex)
+                    val context = when (val detail = _activeDetail.value) {
+                        is HomeDetailView.PlaylistDetail -> {
+                            val isGenMix = detail.playlist.id < 0
+                            PlaybackContext(
+                                title = detail.playlist.name,
+                                type = PlaybackContextType.PLAYLIST,
+                                id = if (isGenMix) (activeGenMixId ?: "genmix_${System.currentTimeMillis()}") else detail.playlist.id.toString(),
+                                playlistId = if (isGenMix) null else detail.playlist.id,
+                                isLocalOrSaved = !isGenMix,
+                                artworkUri = detail.playlist.customCoverUri
+                            )
+                        }
+                        is HomeDetailView.AlbumDetail -> PlaybackContext(
+                            title = detail.album.title,
+                            type = PlaybackContextType.ALBUM,
+                            id = detail.album.id.toString(),
+                            albumId = detail.album.id,
+                            artistName = detail.album.artist,
+                            isLocalOrSaved = true
+                        )
+                        is HomeDetailView.ArtistDetail -> PlaybackContext(
+                            title = detail.artist.name,
+                            type = PlaybackContextType.ARTIST,
+                            id = detail.artist.id.toString(),
+                            artistName = detail.artist.name,
+                            isLocalOrSaved = true
+                        )
+                        is HomeDetailView.MixDetail -> PlaybackContext(
+                            title = detail.mix.title,
+                            type = PlaybackContextType.MIX,
+                            id = detail.mix.id,
+                            isLocalOrSaved = false
+                        )
+                        is HomeDetailView.LikedSongsDetail -> PlaybackContext(
+                            title = "Liked Songs",
+                            type = PlaybackContextType.PLAYLIST,
+                            id = "liked",
+                            isLocalOrSaved = true
+                        )
+                        else -> null
+                    }
+                    musicController.playQueue(songs, startIndex, context = context)
                 }
             } else {
                 musicController.toggleShuffle()
@@ -590,16 +1401,27 @@ class HomeViewModel @Inject constructor(
     }
 }
 
+private data class HomePlaybackState(
+    val currentSong: Song?,
+    val isPlaying: Boolean,
+    val isShuffleEnabled: Boolean,
+    val cacheTick: Long,
+    val favoriteSongIds: Set<Long>,
+    val favoriteVideoIds: Set<String>
+)
+
 private data class HomeMediaData(
     val songs: List<Song>,
     val playlists: List<Playlist>,
     val favorites: List<Song>,
-    val albums: List<Album>
+    val albums: List<Album>,
+    val pinnedVideoIds: Set<String> = emptySet()
 )
 
 private data class HomeContentData(
     val media: HomeMediaData,
     val recent: List<Song>,
+    val recentlyPlayed: List<RecentlyPlayedItem>,
     val recentlyAdded: List<Song>,
     val forgotten: List<Song>,
     val mixes: List<SmartMix>

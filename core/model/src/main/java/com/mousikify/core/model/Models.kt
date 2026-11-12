@@ -1,5 +1,11 @@
 package com.mousikify.core.model
 
+enum class AlbumType {
+    ALBUM,
+    EP,
+    SINGLE
+}
+
 data class Album(
     val id: Long,
     val title: String,
@@ -7,14 +13,40 @@ data class Album(
     val artistId: Long,
     val songCount: Int = 0,
     val year: Int = 0,
-    val artworkUri: String? = null
+    val artworkUri: String? = null,
+    val albumType: AlbumType = AlbumType.ALBUM,
+    val totalDurationMs: Long = 0L,
+    val releaseDate: String? = null,
+    val recordLabel: String? = null,
+    val playlistUrl: String? = null
 )
 
 data class Artist(
     val id: Long,
     val name: String,
     val songCount: Int = 0,
-    val albumCount: Int = 0
+    val albumCount: Int = 0,
+    val avatarUrl: String? = null,
+    val monthlyListeners: String? = null,
+    val bio: String? = null,
+    val channelUrl: String? = null
+)
+
+data class ArtistProfile(
+    val artist: Artist,
+    val topSongs: List<Song> = emptyList(),
+    val albums: List<Album> = emptyList(),
+    val singles: List<Album> = emptyList(),
+    val featuredIn: List<Song> = emptyList(),
+    val similarArtists: List<Artist> = emptyList(),
+    val isLoading: Boolean = false
+)
+
+data class AlbumProfile(
+    val album: Album,
+    val tracks: List<Song> = emptyList(),
+    val otherVersions: List<Album> = emptyList(),
+    val isLoading: Boolean = false
 )
 
 data class Playlist(
@@ -93,3 +125,77 @@ sealed interface PlaybackStatus {
         val isRecoverable: Boolean
     ) : PlaybackStatus
 }
+
+enum class PlaybackContextType {
+    PLAYLIST,
+    ALBUM,
+    ARTIST,
+    MIX,
+    LIBRARY,
+    SEARCH
+}
+
+data class PlaybackContext(
+    val title: String,
+    val type: PlaybackContextType,
+    val id: String? = null,
+    val albumId: Long? = null,
+    val playlistId: Long? = null,
+    val artistName: String? = null,
+    val isLocalOrSaved: Boolean = false,
+    val artworkUri: String? = null,
+    val remotePlaylistUrl: String? = null
+)
+
+enum class RecentlyPlayedType {
+    TRACK,
+    ALBUM,
+    PLAYLIST
+}
+
+data class RecentlyPlayedItem(
+    val id: Long = 0L,
+    val type: RecentlyPlayedType,
+    val referenceId: String,
+    val title: String,
+    val subtitle: String,
+    val artworkUri: String? = null,
+    val playedAt: Long,
+    val song: Song? = null,
+    val album: Album? = null,
+    val playlist: Playlist? = null,
+    val remotePlaylistUrl: String? = null
+)
+
+data class GenreCategory(
+    val id: String,
+    val name: String,
+    val queryKeyword: String,
+    val gradientColors: List<Long>,
+    val iconName: String? = null
+)
+
+data class SearchDiscoveryData(
+    val recommendedSongs: List<Song> = emptyList(),
+    val exploreArtists: List<Artist> = emptyList(),
+    val exploreAlbums: List<Album> = emptyList(),
+    val genres: List<GenreCategory> = emptyList(),
+    val isLoading: Boolean = false
+)
+
+val CURATED_SEED_ARTISTS: List<String> = listOf(
+    "The Weeknd",
+    "Daft Punk",
+    "Coldplay",
+    "Radiohead",
+    "Kendrick Lamar",
+    "Fleetwood Mac",
+    "Billie Eilish",
+    "Tame Impala",
+    "Gorillaz",
+    "Taylor Swift",
+    "Queen"
+)
+
+
+

@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mousikify — Open Shared Music</title>
+  <style>
+    :root {
+      --bg: #121212;
+      --card: #181818;
+      --surface: #242424;
+      --green: #1DB954;
+      --text: #FFFFFF;
+      --subtext: #B3B3B3;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .card {
+      background: var(--card);
+      border-radius: 16px;
+      max-width: 440px;
+      width: 100%;
+      padding: 28px 24px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+      text-align: center;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .badge {
+      display: inline-block;
+      background: rgba(29, 185, 84, 0.15);
+      color: var(--green);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      padding: 5px 12px;
+      border-radius: 999px;
+      margin-bottom: 16px;
+    }
+    .cover {
+      width: 140px;
+      height: 140px;
+      border-radius: 12px;
+      object-fit: cover;
+      margin: 0 auto 16px;
+      display: none;
+      background: var(--surface);
+    }
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      margin-bottom: 6px;
+      word-break: break-word;
+    }
+    .subtitle {
+      color: var(--subtext);
+      font-size: 15px;
+      margin-bottom: 20px;
+    }
+    .tracklist {
+      text-align: left;
+      background: var(--surface);
+      border-radius: 10px;
+      padding: 10px 14px;
+      max-height: 190px;
+      overflow-y: auto;
+      margin-bottom: 20px;
+      display: none;
+    }
+    .track-row {
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      font-size: 13px;
+    }
+    .track-row:last-child { border-bottom: none; }
+    .track-title { font-weight: 600; color: var(--text); }
+    .track-artist { color: var(--subtext); font-size: 12px; }
+    .actions {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 13px 20px;
+      border-radius: 999px;
+      font-size: 15px;
+      font-weight: 700;
+      text-decoration: none;
+      cursor: pointer;
+      border: none;
+      transition: opacity 0.15s ease;
+    }
+    .btn:hover { opacity: 0.9; }
+    .btn-primary {
+      background: var(--green);
+      color: #000000;
+    }
+    .btn-secondary {
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
+    .btn-outline {
+      background: transparent;
+      color: var(--subtext);
+      font-size: 13px;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div id="badge" class="badge">Mousikify</div>
+    <img id="cover" class="cover" alt="Cover Art" />
+    <h1 id="title">Shared on Mousikify</h1>
+    <p id="subtitle" class="subtitle">Opening in Mousikify...</p>
+    <div id="tracklist" class="tracklist"></div>
+    <div class="actions">
+      <a id="openAppBtn" class="btn btn-primary" href="#">Open in Mousikify</a>
+      <a id="openYtBtn" class="btn btn-secondary" href="https://www.youtube.com" target="_blank" rel="noopener">Listen on YouTube</a>
+      <a class="btn btn-outline" href="https://github.com/m111k333/Mousikify/releases/latest" target="_blank" rel="noopener">Don't have the app? Download Mousikify APK</a>
+    </div>
+  </div>
+
+  <script>
+    (async function () {
+      const search = window.location.search || "";
+      const params = new URLSearchParams(search);
+      const customSchemeUrl = "mousikify://open" + search;
+      const isAndroid = /Android/i.test(navigator.userAgent || "");
+      const intentUrl = "intent://open" + search + "#Intent;scheme=mousikify;package=com.mousikify;end";
+
+      const openAppBtn = document.getElementById("openAppBtn");
+      const openYtBtn = document.getElementById("openYtBtn");
+      const badgeEl = document.getElementById("badge");
+      const titleEl = document.getElementById("title");
+      const subtitleEl = document.getElementById("subtitle");
+      const coverEl = document.getElementById("cover");
+      const tracklistEl = document.getElementById("tracklist");
+
+      openAppBtn.href = isAndroid ? intentUrl : customSchemeUrl;
+
+      const playlistParam = params.get("p");
+      if (playlistParam) {
+        badgeEl.textContent = "Shared Playlist";
+        try {
+          const base64 = playlistParam.replace(/-/g, "+").replace(/_/g, "/");
+          const pad = base64.length % 4 === 0 ? "" : "=".repeat(4 - (base64.length % 4));
+          const binaryStr = atob(base64 + pad);
+          const bytes = new Uint8Array(binaryStr.length);
+          for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+
+          const ds = new DecompressionStream("deflate-raw");
+          const writer = ds.writable.getWriter();
+          writer.write(bytes);
+          writer.close();
+          const decompressedBuf = await new Response(ds.readable).arrayBuffer();
+          const text = new TextDecoder("utf-8").decode(decompressedBuf);
+          const lines = text.split("\n").filter(Boolean);
+
+          const playlistName = lines[0] || "Shared Playlist";
+          const tracks = lines.slice(1).map(line => {
+            const parts = line.split("\t");
+            return { vid: parts[0] || "", title: parts[1] || "Track", artist: parts[2] || "" };
+          });
+
+          titleEl.textContent = playlistName;
+          subtitleEl.textContent = tracks.length + (tracks.length === 1 ? " song" : " songs");
+
+          const firstVid = tracks.find(t => t.vid)?.vid;
+          if (firstVid) {
+            coverEl.src = "https://i.ytimg.com/vi/" + encodeURIComponent(firstVid) + "/hqdefault.jpg";
+            coverEl.style.display = "block";
+          }
+
+          if (tracks.length > 0) {
+            tracklistEl.style.display = "block";
+            tracks.forEach((t, idx) => {
+              const row = document.createElement("div");
+              row.className = "track-row";
+              const titleDiv = document.createElement("div");
+              titleDiv.className = "track-title";
+              titleDiv.textContent = (idx + 1) + ". " + t.title;
+              const artistDiv = document.createElement("div");
+              artistDiv.className = "track-artist";
+              artistDiv.textContent = t.artist;
+              row.appendChild(titleDiv);
+              if (t.artist) row.appendChild(artistDiv);
+              tracklistEl.appendChild(row);
+            });
+          }
+
+          const videoIds = tracks.map(t => t.vid).filter(Boolean).slice(0, 50);
+          if (videoIds.length > 0) {
+            openYtBtn.href = "https://www.youtube.com/watch_videos?video_ids=" + videoIds.join(",");
+          } else if (tracks.length > 0) {
+            openYtBtn.href = "https://www.youtube.com/results?search_query=" + encodeURIComponent(tracks[0].title + " " + tracks[0].artist);
+          }
+        } catch (e) {
+          titleEl.textContent = "Shared Playlist";
+          subtitleEl.textContent = "Open in Mousikify to view and save this playlist";
+        }
+      } else {
+        badgeEl.textContent = "Shared Song";
+        const v = params.get("v") || "";
+        const q = params.get("q") || "";
+        const t = params.get("t") || q || "Shared Track";
+        const a = params.get("a") || "";
+        titleEl.textContent = t;
+        subtitleEl.textContent = a || "Mousikify Track";
+        if (v) {
+          coverEl.src = "https://i.ytimg.com/vi/" + encodeURIComponent(v) + "/hqdefault.jpg";
+          coverEl.style.display = "block";
+          openYtBtn.href = "https://www.youtube.com/watch?v=" + encodeURIComponent(v);
+        } else {
+          const query = (q || (t + " " + a)).trim();
+          openYtBtn.href = "https://www.youtube.com/results?search_query=" + encodeURIComponent(query);
+        }
+      }
+
+      if (search.length > 1) {
+        setTimeout(() => {
+          window.location.href = customSchemeUrl;
+        }, 150);
+      }
+    })();
+  </script>
+</body>
+</html>

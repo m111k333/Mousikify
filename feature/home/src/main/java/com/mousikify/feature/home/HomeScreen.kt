@@ -37,6 +37,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -49,13 +51,14 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.PlaylistAdd
-import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -63,9 +66,11 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -73,9 +78,11 @@ import androidx.compose.material3.Snackbar
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -94,9 +101,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil3.compose.AsyncImage
+import androidx.compose.ui.platform.LocalContext
 import com.mousikify.core.designsystem.component.AddSongsToPlaylistDialog
+import com.mousikify.core.designsystem.component.AddToPlaylistDialog
+import com.mousikify.core.designsystem.component.CreatePlaylistDialog
 import com.mousikify.core.designsystem.component.MediaDetailView
+import com.mousikify.core.designsystem.component.SongContextMenuBottomSheet
 import com.mousikify.core.designsystem.component.TrackListItem
+import com.mousikify.core.designsystem.component.YouTubeMusicAlbumView
+import com.mousikify.core.designsystem.component.YouTubeMusicArtistView
+import com.mousikify.core.designsystem.component.bounceClickable
+
+
 import com.mousikify.core.designsystem.theme.SpotifyBackground
 import com.mousikify.core.designsystem.theme.SpotifyCardBackground
 import com.mousikify.core.designsystem.theme.SpotifyGreen
@@ -105,20 +121,45 @@ import com.mousikify.core.designsystem.theme.SpotifyTextPrimary
 import com.mousikify.core.designsystem.theme.SpotifyTextSecondary
 import com.mousikify.core.model.Album
 import com.mousikify.core.model.Playlist
+import com.mousikify.core.model.RecentlyPlayedItem
+import com.mousikify.core.model.RecentlyPlayedType
 import com.mousikify.core.model.Song
 
 @Composable
 fun HomeRoute(
     onNavigateToEqualizer: () -> Unit = {},
     onNavigateToDiagnostics: () -> Unit = {},
+    onNavigateToPlaylistGenerator: () -> Unit = {},
+    onOpenRadio: (Song) -> Unit = {},
     homeResetTrigger: Long = 0L,
+    initialMixId: String? = null,
+    onInitialMixHandled: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val openRadioSong by viewModel.openRadioEvent.collectAsStateWithLifecycle()
+
+    androidx.compose.runtime.LaunchedEffect(openRadioSong) {
+        val song = openRadioSong
+        if (song != null) {
+            onOpenRadio(song)
+            viewModel.consumeOpenRadioEvent()
+        }
+    }
 
     androidx.compose.runtime.LaunchedEffect(homeResetTrigger) {
         if (homeResetTrigger > 0L) {
             viewModel.onIntent(HomeIntent.CloseDetail)
+        }
+    }
+
+    androidx.compose.runtime.LaunchedEffect(initialMixId, uiState.smartMixes) {
+        if (!initialMixId.isNullOrBlank() && uiState.smartMixes.isNotEmpty()) {
+            val target = uiState.smartMixes.firstOrNull { it.id == initialMixId }
+            if (target != null) {
+                viewModel.onIntent(HomeIntent.OpenMix(target))
+                onInitialMixHandled()
+            }
         }
     }
 
@@ -136,10 +177,13 @@ fun HomeRoute(
         onPickFolder = { folderPicker.launch(null) },
         onNavigateToEqualizer = onNavigateToEqualizer,
         onNavigateToDiagnostics = onNavigateToDiagnostics,
-        homeResetTrigger = homeResetTrigger
+        onNavigateToPlaylistGenerator = onNavigateToPlaylistGenerator,
+        homeResetTrigger = homeResetTrigger,
+        isTrackCached = viewModel::isTrackCached
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     uiState: HomeUiState,
@@ -147,16 +191,26 @@ fun HomeScreen(
     onPickFolder: () -> Unit,
     onNavigateToEqualizer: () -> Unit,
     onNavigateToDiagnostics: () -> Unit = {},
+    onNavigateToPlaylistGenerator: () -> Unit = {},
     homeResetTrigger: Long = 0L,
+    isTrackCached: (Song) -> Boolean = { it.isLocal },
     modifier: Modifier = Modifier
 ) {
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    var showTrackHistorySheet by remember { mutableStateOf(false) }
 
     androidx.compose.runtime.LaunchedEffect(homeResetTrigger) {
         if (homeResetTrigger > 0L && uiState.activeDetail == null) {
             try {
                 listState.animateScrollToItem(0)
             } catch (_: Exception) {}
+        }
+    }
+
+    LaunchedEffect(uiState.statusMessage) {
+        if (uiState.statusMessage != null) {
+            delay(if (uiState.canUndo) 5000L else 3000L)
+            onIntent(HomeIntent.DismissStatusMessage)
         }
     }
 
@@ -170,19 +224,21 @@ fun HomeScreen(
             when (detail) {
                 null -> "home_root"
                 is HomeDetailView.PlaylistDetail -> "playlist_${detail.playlist.id}"
-                is HomeDetailView.AlbumDetail -> "album_${detail.album.id}"
+                is HomeDetailView.AlbumDetail -> "album_${detail.album.title.trim().lowercase()}_${detail.album.artist.trim().lowercase()}"
+                is HomeDetailView.ArtistDetail -> "artist_${com.mousikify.core.model.cleanArtistName(detail.artist.name).trim().lowercase()}"
                 is HomeDetailView.LikedSongsDetail -> "liked_songs"
                 is HomeDetailView.MixDetail -> "mix_${detail.mix.id}"
             }
         },
         transitionSpec = {
             if (initialState != null && targetState != null) {
-                androidx.compose.animation.EnterTransition.None.togetherWith(androidx.compose.animation.ExitTransition.None)
+                (slideInHorizontally(animationSpec = tween(260, easing = androidx.compose.animation.core.FastOutSlowInEasing)) { it / 3 } + fadeIn(animationSpec = tween(180)))
+                    .togetherWith(slideOutHorizontally(animationSpec = tween(200)) { -it / 3 } + fadeOut(animationSpec = tween(160)))
             } else if (targetState != null) {
-                (slideInHorizontally(animationSpec = tween(240)) { it / 3 } + fadeIn(animationSpec = tween(200)))
+                (slideInHorizontally(animationSpec = tween(280, easing = androidx.compose.animation.core.FastOutSlowInEasing)) { it / 3 } + fadeIn(animationSpec = tween(200)))
                     .togetherWith(slideOutHorizontally(animationSpec = tween(200)) { -it / 3 } + fadeOut(animationSpec = tween(160)))
             } else {
-                (slideInHorizontally(animationSpec = tween(220)) { -it / 3 } + fadeIn(animationSpec = tween(180)))
+                (slideInHorizontally(animationSpec = tween(220, easing = androidx.compose.animation.core.FastOutSlowInEasing)) { -it / 3 } + fadeIn(animationSpec = tween(180)))
                     .togetherWith(slideOutHorizontally(animationSpec = tween(220)) { it / 3 } + fadeOut(animationSpec = tween(180)))
             }
         },
@@ -193,6 +249,7 @@ fun HomeScreen(
                 detail = currentDetail,
                 uiState = uiState,
                 onIntent = onIntent,
+                isTrackCached = isTrackCached,
                 modifier = modifier
             )
         } else {
@@ -277,13 +334,73 @@ fun HomeScreen(
                         likedCount = uiState.likedCount,
                         playlists = uiState.playlists,
                         mixes = uiState.smartMixes,
-                        totalSongCount = uiState.totalSongCount,
+                        albums = uiState.albums,
                         onLikedClick = { onIntent(HomeIntent.OpenLikedSongs) },
                         onPlaylistClick = { onIntent(HomeIntent.OpenPlaylist(it)) },
                         onMixClick = { onIntent(HomeIntent.OpenMix(it)) },
-                        onImportFolderClick = onPickFolder
+                        onAlbumClick = { onIntent(HomeIntent.OpenAlbum(it)) },
+                        onImportFolderClick = onPickFolder,
+                        onPlaylistGeneratorClick = onNavigateToPlaylistGenerator
                     )
                 }
+
+                // "Recently Played" Prominent Carousel
+                val recentItems = uiState.recentlyPlayed
+                if ((recentItems.isNotEmpty() || uiState.recentlyHeard.isNotEmpty()) && selectedPill != "Playlists") {
+                    item {
+                        Spacer(modifier = Modifier.height(28.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = "Recently played",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                IconButton(
+                                    onClick = { showTrackHistorySheet = true },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.History,
+                                        contentDescription = "Recent 30 tracks history log",
+                                        tint = SpotifyTextSecondary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                            if (recentItems.size > 1) {
+                                Text(
+                                    text = "${recentItems.size} items",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SpotifyTextSecondary
+                                )
+                            }
+                        }
+                        if (recentItems.isNotEmpty()) {
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(14.dp)
+                            ) {
+                                items(recentItems, key = { "recent_${it.type}_${it.referenceId}" }) { item ->
+                                    SpotifyRecentlyPlayedCard(
+                                        item = item,
+                                        onClick = { onIntent(HomeIntent.OpenRecentlyPlayed(item)) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
 
             // Empty Library Hero Banner if no tracks found
             if (uiState.totalSongCount == 0 && !uiState.isLoading) {
@@ -448,29 +565,6 @@ fun HomeScreen(
                 }
             }
 
-            // "Recently Played" Carousel
-            if (uiState.recentlyPlayed.isNotEmpty() && selectedPill != "Playlists") {
-                item {
-                    Spacer(modifier = Modifier.height(28.dp))
-                    Text(
-                        text = "Recently played",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-                    )
-                    LazyRow(
-                        contentPadding = PaddingValues(horizontal = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(14.dp)
-                    ) {
-                        items(uiState.recentlyPlayed, key = { it.id }) { song ->
-                            SpotifySquareTrackCard(
-                                song = song,
-                                onClick = { onIntent(HomeIntent.PlaySong(song, uiState.recentlyPlayed)) }
-                            )
-                        }
-                    }
-                }
-            }
 
             // "Recently Added" Carousel
             if (uiState.recentlyAdded.isNotEmpty() && selectedPill != "Playlists") {
@@ -515,10 +609,14 @@ fun HomeScreen(
                 }
 
                 items(uiState.forgottenFavorites.take(6), key = { it.id }) { song ->
+                    val isCached = remember(song.id, uiState.cacheUpdateTick) {
+                        if (song.isLocal) true else isTrackCached(song)
+                    }
                     TrackListItem(
                         song = song,
                         isPlaying = song.id == uiState.currentSongId && uiState.isPlaying,
-                        isCachedOffline = true,
+                        isCachedOffline = isCached,
+                        isFavorite = uiState.isFavorite(song),
                         onClick = { onIntent(HomeIntent.PlaySong(song, uiState.forgottenFavorites)) },
                         onFavoriteToggle = { onIntent(HomeIntent.ToggleFavorite(song)) }
                     )
@@ -535,12 +633,128 @@ fun HomeScreen(
                 containerColor = SpotifySurfaceElevated,
                 contentColor = SpotifyTextPrimary,
                 action = {
-                    TextButton(onClick = { onIntent(HomeIntent.DismissStatusMessage) }) {
-                        Text("OK", color = SpotifyGreen)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (uiState.canUndo) {
+                            TextButton(onClick = { onIntent(HomeIntent.UndoDelete) }) {
+                                Text("UNDO", color = SpotifyGreen, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        TextButton(onClick = { onIntent(HomeIntent.DismissStatusMessage) }) {
+                            Text(if (uiState.canUndo) "DISMISS" else "OK", color = SpotifyTextSecondary)
+                        }
                     }
                 }
             ) {
                 Text(uiState.statusMessage)
+            }
+        }
+
+        if (showTrackHistorySheet) {
+            val recentTracks = remember(uiState.recentlyHeard, uiState.recentlyPlayed) {
+                if (uiState.recentlyHeard.isNotEmpty()) {
+                    uiState.recentlyHeard.take(30)
+                } else {
+                    uiState.recentlyPlayed.mapNotNull { it.song }.distinctBy { it.contentUri }.take(30)
+                }
+            }
+            ModalBottomSheet(
+                onDismissRequest = { showTrackHistorySheet = false },
+                containerColor = SpotifyCardBackground,
+                contentColor = SpotifyTextPrimary
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 24.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.History,
+                                contentDescription = null,
+                                tint = SpotifyGreen,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Text(
+                                text = "Recent 30 Tracks",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = SpotifyTextPrimary
+                            )
+                        }
+                        Text(
+                            text = "${recentTracks.size} tracks",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = SpotifyTextSecondary
+                        )
+                    }
+
+                    if (recentTracks.isEmpty()) {
+                        Text(
+                            text = "No tracks played recently.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = SpotifyTextSecondary,
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 24.dp)
+                        )
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentPadding = PaddingValues(vertical = 4.dp)
+                        ) {
+                            itemsIndexed(
+                                items = recentTracks,
+                                key = { index, song -> "history_track_${song.contentUri}_$index" }
+                            ) { index, song ->
+                                val isPlayingThis = song.id == uiState.currentSongId
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            onIntent(HomeIntent.PlaySong(song, recentTracks))
+                                        }
+                                        .padding(horizontal = 20.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "${index + 1}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = if (isPlayingThis) SpotifyGreen else SpotifyTextSecondary,
+                                        fontWeight = if (isPlayingThis) FontWeight.Bold else FontWeight.Normal,
+                                        modifier = Modifier.width(28.dp)
+                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = song.title,
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            fontWeight = if (isPlayingThis) FontWeight.Bold else FontWeight.SemiBold,
+                                            color = if (isPlayingThis) SpotifyGreen else SpotifyTextPrimary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        if (song.artistName.isNotBlank()) {
+                                            Text(
+                                                text = song.artistName,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = SpotifyTextSecondary,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -575,13 +789,16 @@ private fun QuickJumpGrid(
     likedCount: Int,
     playlists: List<Playlist>,
     mixes: List<SmartMix>,
-    totalSongCount: Int,
+    albums: List<Album> = emptyList(),
     onLikedClick: () -> Unit,
     onPlaylistClick: (Playlist) -> Unit,
     onMixClick: (SmartMix) -> Unit,
+    onAlbumClick: (Album) -> Unit = {},
     onImportFolderClick: () -> Unit,
+    onPlaylistGeneratorClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -630,7 +847,7 @@ private fun QuickJumpGrid(
                                 .background(SpotifySurfaceElevated),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.QueueMusic, contentDescription = null, tint = SpotifyGreen, modifier = Modifier.size(24.dp))
+                            Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = null, tint = SpotifyGreen, modifier = Modifier.size(24.dp))
                             if (!p1.customCoverUri.isNullOrBlank()) {
                                 AsyncImage(model = p1.customCoverUri, contentDescription = p1.name, modifier = Modifier.matchParentSize(), contentScale = ContentScale.Crop)
                             }
@@ -669,7 +886,7 @@ private fun QuickJumpGrid(
             }
         }
 
-        // Row 2: Second Playlist / Mix & Third Playlist / Mix
+        // Row 2: Second Playlist / Mix & Smart Generator (Custom Mix)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -686,7 +903,7 @@ private fun QuickJumpGrid(
                                 .background(SpotifySurfaceElevated),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.QueueMusic, contentDescription = null, tint = SpotifyGreen, modifier = Modifier.size(24.dp))
+                            Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = null, tint = SpotifyGreen, modifier = Modifier.size(24.dp))
                             if (!p2.customCoverUri.isNullOrBlank()) {
                                 AsyncImage(model = p2.customCoverUri, contentDescription = p2.name, modifier = Modifier.matchParentSize(), contentScale = ContentScale.Crop)
                             }
@@ -724,7 +941,40 @@ private fun QuickJumpGrid(
                 )
             }
 
+            // Elegant Smart Playlist Generator tile
+            SpotifyQuickTile(
+                title = "Custom Mix",
+                icon = {
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(Color(0xFF8E24AA), Color(0xFF1DB954))
+                                )
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = "Smart Playlist Generator",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                },
+                onClick = onPlaylistGeneratorClick,
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        // Row 3: Third Playlist / Album & Select Folder
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             val p3 = playlists.getOrNull(2)
+            val a1 = albums.firstOrNull()
             val m3 = mixes.getOrNull(2)
             if (p3 != null) {
                 SpotifyQuickTile(
@@ -736,13 +986,32 @@ private fun QuickJumpGrid(
                                 .background(SpotifySurfaceElevated),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.QueueMusic, contentDescription = null, tint = SpotifyGreen, modifier = Modifier.size(24.dp))
+                            Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = null, tint = SpotifyGreen, modifier = Modifier.size(24.dp))
                             if (!p3.customCoverUri.isNullOrBlank()) {
                                 AsyncImage(model = p3.customCoverUri, contentDescription = p3.name, modifier = Modifier.matchParentSize(), contentScale = ContentScale.Crop)
                             }
                         }
                     },
                     onClick = { onPlaylistClick(p3) },
+                    modifier = Modifier.weight(1f)
+                )
+            } else if (a1 != null) {
+                SpotifyQuickTile(
+                    title = a1.title,
+                    icon = {
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .background(SpotifySurfaceElevated),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.Album, contentDescription = null, tint = SpotifyGreen, modifier = Modifier.size(24.dp))
+                            if (!a1.artworkUri.isNullOrBlank()) {
+                                AsyncImage(model = a1.artworkUri, contentDescription = a1.title, modifier = Modifier.matchParentSize(), contentScale = ContentScale.Crop)
+                            }
+                        }
+                    },
+                    onClick = { onAlbumClick(a1) },
                     modifier = Modifier.weight(1f)
                 )
             } else if (m3 != null) {
@@ -763,43 +1032,26 @@ private fun QuickJumpGrid(
                 )
             } else {
                 SpotifyQuickTile(
-                    title = "Heavy Rotation",
+                    title = "Discover",
                     icon = {
-                        Box(modifier = Modifier.size(56.dp).background(SpotifySurfaceElevated), contentAlignment = Alignment.Center) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = SpotifyGreen)
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .background(Color(0xFF2E2E2E)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.MusicNote,
+                                contentDescription = null,
+                                tint = SpotifyGreen,
+                                modifier = Modifier.size(24.dp)
+                            )
                         }
                     },
                     onClick = {},
                     modifier = Modifier.weight(1f)
                 )
             }
-        }
-
-        // Row 3: Downloaded Files & Select Folder
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            SpotifyQuickTile(
-                title = "$totalSongCount Songs",
-                icon = {
-                    Box(
-                        modifier = Modifier
-                            .size(56.dp)
-                            .background(Color(0xFF2E2E2E)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Download,
-                            contentDescription = "Downloads",
-                            tint = SpotifyGreen,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                },
-                onClick = onImportFolderClick,
-                modifier = Modifier.weight(1f)
-            )
 
             SpotifyQuickTile(
                 title = "Select Folder",
@@ -823,6 +1075,7 @@ private fun QuickJumpGrid(
             )
         }
     }
+
 }
 
 @Composable
@@ -837,9 +1090,10 @@ private fun SpotifyQuickTile(
             .height(56.dp)
             .clip(RoundedCornerShape(4.dp))
             .background(SpotifyCardBackground)
-            .clickable(onClick = onClick),
+            .bounceClickable(minScale = 0.97f, onClick = onClick),
         verticalAlignment = Alignment.CenterVertically
     ) {
+
         icon()
         Spacer(modifier = Modifier.width(10.dp))
         Text(
@@ -876,17 +1130,8 @@ private fun SpotifySmartMixCard(
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.End
                 ) {
-                    Text(
-                        text = "SPOTIFY",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            letterSpacing = 1.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 9.sp
-                        ),
-                        color = Color.White.copy(alpha = 0.7f)
-                    )
                     Icon(
                         imageVector = Icons.Default.AutoAwesome,
                         contentDescription = null,
@@ -957,7 +1202,7 @@ private fun SpotifyPlaylistCard(
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = Icons.Default.QueueMusic,
+                imageVector = Icons.AutoMirrored.Filled.QueueMusic,
                 contentDescription = null,
                 tint = SpotifyTextSecondary.copy(alpha = 0.4f),
                 modifier = Modifier.size(40.dp)
@@ -988,6 +1233,65 @@ private fun SpotifyPlaylistCard(
 }
 
 @Composable
+private fun SpotifyRecentlyPlayedCard(
+    item: RecentlyPlayedItem,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .width(140.dp)
+            .bounceClickable(minScale = 0.95f, onClick = onClick)
+    ) {
+        val defaultIcon = when (item.type) {
+            RecentlyPlayedType.TRACK -> Icons.Default.MusicNote
+            RecentlyPlayedType.ALBUM -> Icons.Default.Album
+            RecentlyPlayedType.PLAYLIST -> Icons.AutoMirrored.Filled.QueueMusic
+        }
+
+        Box(
+            modifier = Modifier
+                .size(140.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(SpotifyCardBackground),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = defaultIcon,
+                contentDescription = null,
+                tint = SpotifyTextSecondary.copy(alpha = 0.35f),
+                modifier = Modifier.size(38.dp)
+            )
+            val artworkModel = item.artworkUri ?: item.song?.let {
+                "content://media/external/audio/albumart/${it.albumId}"
+            }
+            if (!artworkModel.isNullOrBlank()) {
+                AsyncImage(
+                    model = artworkModel,
+                    contentDescription = item.title,
+                    modifier = Modifier.matchParentSize(),
+                    contentScale = ContentScale.Crop
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = item.title,
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = item.subtitle,
+            style = MaterialTheme.typography.bodyMedium,
+            color = SpotifyTextSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
 private fun SpotifySquareTrackCard(
     song: Song,
     onClick: () -> Unit
@@ -995,8 +1299,9 @@ private fun SpotifySquareTrackCard(
     Column(
         modifier = Modifier
             .width(140.dp)
-            .clickable(onClick = onClick)
+            .bounceClickable(minScale = 0.95f, onClick = onClick)
     ) {
+
         Box(
             modifier = Modifier
                 .size(140.dp)
@@ -1089,8 +1394,56 @@ private fun HomeDetailScreen(
     detail: HomeDetailView,
     uiState: HomeUiState,
     onIntent: (HomeIntent) -> Unit,
+    isTrackCached: (Song) -> Boolean,
     modifier: Modifier = Modifier
 ) {
+    if (detail is HomeDetailView.ArtistDetail && detail.artistProfile != null) {
+        YouTubeMusicArtistView(
+            artistProfile = detail.artistProfile,
+            currentSongId = uiState.currentSongId,
+            isPlaying = uiState.isPlaying,
+            onBack = { onIntent(HomeIntent.CloseDetail) },
+            onPlaySong = { song, queue -> onIntent(HomeIntent.PlaySong(song, queue)) },
+            onShuffleArtist = { onIntent(HomeIntent.ToggleShuffle(detail.artistProfile.topSongs)) },
+            onAlbumClick = { onIntent(HomeIntent.OpenAlbum(it)) },
+            onSimilarArtistClick = { onIntent(HomeIntent.OpenArtistByName(it.name)) },
+            onToggleFavorite = { onIntent(HomeIntent.ToggleFavorite(it)) },
+            onAddToPlaylist = { onIntent(HomeIntent.AddSongObjectToPlaylist(0L, it)) },
+            onPlayNext = { onIntent(HomeIntent.PlayNext(it)) },
+            onAddToQueue = { onIntent(HomeIntent.AddToQueue(it)) },
+            onGoToAlbum = { alb, art -> onIntent(HomeIntent.OpenAlbumByName(alb, art)) },
+            isTrackCached = isTrackCached,
+            isTrackFavorite = { uiState.isFavorite(it) },
+            modifier = modifier
+        )
+        return
+    }
+
+    if (detail is HomeDetailView.AlbumDetail && detail.albumProfile != null) {
+        YouTubeMusicAlbumView(
+            albumProfile = detail.albumProfile,
+            currentSongId = uiState.currentSongId,
+            isPlaying = uiState.isPlaying,
+            isShuffleEnabled = uiState.isShuffleEnabled,
+            onBack = { onIntent(HomeIntent.CloseDetail) },
+            onPlaySong = { song, index -> onIntent(HomeIntent.PlayAll(detail.albumProfile.tracks, index)) },
+            onPlayAll = { onIntent(HomeIntent.PlayAll(detail.albumProfile.tracks, 0)) },
+            onToggleShuffle = { onIntent(HomeIntent.ToggleShuffle(detail.albumProfile.tracks)) },
+            onArtistClick = { onIntent(HomeIntent.OpenArtistByName(it)) },
+            onToggleFavorite = { onIntent(HomeIntent.ToggleFavorite(it)) },
+            onAddToPlaylist = { onIntent(HomeIntent.AddSongObjectToPlaylist(0L, it)) },
+            onStartRadio = { onIntent(HomeIntent.StartRadio(it)) },
+            onPlayNext = { onIntent(HomeIntent.PlayNext(it)) },
+            onAddToQueue = { onIntent(HomeIntent.AddToQueue(it)) },
+            onGoToArtist = { onIntent(HomeIntent.OpenArtistByName(it)) },
+            isAlbumSaved = uiState.isAlbumSaved(detail.albumProfile),
+            isTrackCached = isTrackCached,
+            isTrackFavorite = { uiState.isFavorite(it) },
+            modifier = modifier
+        )
+        return
+    }
+
     val title: String
     val subtitle: String
     val songs: List<Song>
@@ -1110,7 +1463,7 @@ private fun HomeDetailScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Default.QueueMusic,
+                        imageVector = Icons.AutoMirrored.Filled.QueueMusic,
                         contentDescription = null,
                         tint = SpotifyTextSecondary.copy(alpha = 0.35f),
                         modifier = Modifier.size(60.dp)
@@ -1201,12 +1554,64 @@ private fun HomeDetailScreen(
                 }
             }
         }
+        is HomeDetailView.ArtistDetail -> {
+            title = detail.artist.name
+            subtitle = "${detail.songs.size} songs • Artist"
+            songs = detail.songs
+            headerArtwork = {
+                Box(
+                    modifier = Modifier
+                        .size(150.dp)
+                        .clip(CircleShape)
+                        .background(SpotifyCardBackground),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Person,
+                        contentDescription = null,
+                        tint = SpotifyTextSecondary.copy(alpha = 0.35f),
+                        modifier = Modifier.size(60.dp)
+                    )
+                }
+            }
+        }
     }
 
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
     var showAddSongsDialog by remember { mutableStateOf(false) }
     var isEditMode by remember(detail) { mutableStateOf(false) }
+    var songToAddToPlaylist by remember { mutableStateOf<Song?>(null) }
+    var showCreatePlaylistForSongDialog by remember { mutableStateOf(false) }
+
+    if (songToAddToPlaylist != null && !showCreatePlaylistForSongDialog) {
+        val target = songToAddToPlaylist!!
+        AddToPlaylistDialog(
+            song = target,
+            playlists = uiState.playlists,
+            onDismiss = { songToAddToPlaylist = null },
+            onCreateNewPlaylist = { showCreatePlaylistForSongDialog = true },
+            onSelectPlaylist = { playlistId ->
+                onIntent(HomeIntent.AddSongObjectToPlaylist(playlistId, target))
+                songToAddToPlaylist = null
+            }
+        )
+    }
+
+    if (showCreatePlaylistForSongDialog && songToAddToPlaylist != null) {
+        val target = songToAddToPlaylist!!
+        CreatePlaylistDialog(
+            onDismiss = {
+                showCreatePlaylistForSongDialog = false
+                songToAddToPlaylist = null
+            },
+            onCreate = { playlistName ->
+                showCreatePlaylistForSongDialog = false
+                onIntent(HomeIntent.CreatePlaylistAndAddSong(playlistName, target))
+                songToAddToPlaylist = null
+            }
+        )
+    }
 
     BackHandler(enabled = isEditMode) {
         isEditMode = false
@@ -1300,6 +1705,9 @@ private fun HomeDetailScreen(
         )
     }
 
+    val isSavedPlaylist = detail is HomeDetailView.PlaylistDetail && detail.playlist.id > 0
+    val isUnsavedGeneratedMix = detail is HomeDetailView.PlaylistDetail && detail.playlist.id < 0
+
     MediaDetailView(
         title = title,
         subtitle = subtitle,
@@ -1319,9 +1727,19 @@ private fun HomeDetailScreen(
         onPlayAll = { onIntent(HomeIntent.PlayAll(songs, 0)) },
         onToggleShuffle = { onIntent(HomeIntent.ToggleShuffle(songs)) },
         onToggleFavorite = { onIntent(HomeIntent.ToggleFavorite(it)) },
+        onSwipeRemove = if (isSavedPlaylist) {
+            { song -> onIntent(HomeIntent.RemoveSongFromPlaylist((detail as HomeDetailView.PlaylistDetail).playlist.id, song.id)) }
+        } else null,
+        isCollectionSaved = isSavedPlaylist,
+        isSongCached = isTrackCached,
+        isTrackFavorite = { uiState.isFavorite(it) },
+        isEditMode = isEditMode && isSavedPlaylist,
+        onReorderSongs = if (isSavedPlaylist) {
+            { orderedIds -> onIntent(HomeIntent.ReorderPlaylist((detail as HomeDetailView.PlaylistDetail).playlist.id, orderedIds)) }
+        } else null,
         modifier = modifier,
         topBarActions = {
-            if (detail is HomeDetailView.PlaylistDetail) {
+            if (isSavedPlaylist) {
                 TextButton(onClick = { isEditMode = !isEditMode }) {
                     Text(
                         text = if (isEditMode) "Done" else "Edit",
@@ -1357,7 +1775,30 @@ private fun HomeDetailScreen(
             }
         },
         actionBarActions = {
-            if (detail is HomeDetailView.PlaylistDetail) {
+            if (detail is HomeDetailView.PlaylistDetail && songs.isNotEmpty()) {
+                val context = androidx.compose.ui.platform.LocalContext.current
+                Spacer(modifier = Modifier.width(8.dp))
+                IconButton(
+                    onClick = {
+                        val shareUrl = com.mousikify.core.model.DeepLinkCodec.encodePlaylistUrl(detail.playlist.name, songs)
+                        val sendIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(android.content.Intent.EXTRA_SUBJECT, detail.playlist.name)
+                            putExtra(android.content.Intent.EXTRA_TEXT, shareUrl)
+                        }
+                        context.startActivity(android.content.Intent.createChooser(sendIntent, "Share playlist via"))
+                    },
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Share,
+                        contentDescription = "Share playlist",
+                        tint = SpotifyTextSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+            if (isSavedPlaylist) {
                 Spacer(modifier = Modifier.width(8.dp))
                 OutlinedButton(
                     onClick = { showAddSongsDialog = true },
@@ -1399,6 +1840,60 @@ private fun HomeDetailScreen(
                             Text("Rename", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
+                }
+            } else if (isUnsavedGeneratedMix) {
+                val mixDetail = detail as HomeDetailView.PlaylistDetail
+                Spacer(modifier = Modifier.width(8.dp))
+                OutlinedButton(
+                    onClick = { onIntent(HomeIntent.SavePlaylistToLibrary(mixDetail.playlist.name, songs)) },
+                    shape = RoundedCornerShape(50),
+                    border = BorderStroke(1.dp, SpotifyGreen.copy(alpha = 0.7f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = SpotifyGreen),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Add to Library",
+                        tint = SpotifyGreen,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Add to Library", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = SpotifyGreen)
+                }
+            } else if (detail is HomeDetailView.MixDetail && detail.mix.id == "discover_mix") {
+                Spacer(modifier = Modifier.width(8.dp))
+                OutlinedButton(
+                    onClick = { onIntent(HomeIntent.RefreshDiscoverMix) },
+                    enabled = !uiState.isDiscoverRefreshing,
+                    shape = RoundedCornerShape(50),
+                    border = BorderStroke(1.dp, SpotifyGreen.copy(alpha = 0.6f)),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = SpotifyTextPrimary,
+                        disabledContentColor = SpotifyTextSecondary
+                    ),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                ) {
+                    if (uiState.isDiscoverRefreshing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            color = SpotifyGreen,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Refresh mix",
+                            tint = SpotifyGreen,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (uiState.isDiscoverRefreshing) "Refreshing..." else "Refresh mix",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = SpotifyTextPrimary
+                    )
                 }
             }
         },
@@ -1451,6 +1946,18 @@ private fun HomeDetailScreen(
                             modifier = Modifier.size(18.dp)
                         )
                     }
+                }
+            } else if (detail is HomeDetailView.MixDetail && detail.mix.id == "discover_mix") {
+                IconButton(
+                    onClick = { songToAddToPlaylist = song },
+                    modifier = Modifier.padding(end = 4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.PlaylistAdd,
+                        contentDescription = "Add to playlist",
+                        tint = SpotifyTextSecondary,
+                        modifier = Modifier.size(22.dp)
+                    )
                 }
             }
         }

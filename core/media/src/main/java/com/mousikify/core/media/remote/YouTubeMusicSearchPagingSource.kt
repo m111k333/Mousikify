@@ -19,7 +19,7 @@ import org.schabi.newpipe.extractor.stream.StreamInfoItem
  */
 class YouTubeMusicSearchPagingSource(
     private val query: String,
-    private val contentFilter: String = YoutubeSearchQueryHandlerFactory.MUSIC_SONGS
+    private val contentFilter: String = YoutubeSearchQueryHandlerFactory.VIDEOS
 ) : PagingSource<Page, Song>() {
 
     private var currentExtractor: SearchExtractor? = null
@@ -81,7 +81,12 @@ class YouTubeMusicSearchPagingSource(
                 .removeSuffix(" - Topic")
                 .ifBlank { "YouTube Music" }
 
-            return Song(
+            val rawDate = textualUploadDate
+            val parsedYear = if (!rawDate.isNullOrBlank()) {
+                Regex("\\b(19\\d\\d|20\\d\\d)\\b").find(rawDate)?.value?.toIntOrNull() ?: 0
+            } else 0
+
+            val rawSong = Song(
                 id = videoId.toRemoteSongId(),
                 contentUri = "ytm://$videoId",
                 title = name?.trim()?.ifBlank { "Unknown Track" } ?: "Unknown Track",
@@ -91,13 +96,15 @@ class YouTubeMusicSearchPagingSource(
                 albumName = "YouTube Music",
                 durationMs = if (duration > 0) duration * 1000L else 0L,
                 trackNumber = 0,
-                year = 0,
+                year = parsedYear,
                 folderPath = "YouTube Music Stream",
                 dateAdded = System.currentTimeMillis() / 1000L,
                 dateModified = System.currentTimeMillis() / 1000L,
                 isFavorite = false,
-                artworkUri = highResThumb
+                artworkUri = highResThumb,
+                viewCount = if (viewCount > 0) viewCount else null
             )
+            return RemoteMusicRepository.parsePlaylistTrackAttribution(rawSong)
         }
 
         fun extractVideoId(url: String?): String? {

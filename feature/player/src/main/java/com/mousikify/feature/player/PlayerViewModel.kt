@@ -7,12 +7,14 @@ import android.net.Uri
 import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.mousikify.core.database.preferences.PlaybackPreferences
 import com.mousikify.core.database.repository.PlaylistRepository
 import com.mousikify.core.database.repository.SongRepository
 import com.mousikify.core.designsystem.palette.PaletteExtractor
 import com.mousikify.core.designsystem.theme.SpotifyBlack
 import com.mousikify.core.media.controller.MusicController
 import com.mousikify.core.model.LyricLine
+import com.mousikify.core.model.PlaybackContext
 import com.mousikify.core.model.PlaybackStatus
 import com.mousikify.core.model.Playlist
 import com.mousikify.core.model.RepeatMode
@@ -25,6 +27,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -52,7 +55,9 @@ data class PlayerUiState(
     val playlists: List<Playlist> = emptyList(),
     val showAddToPlaylistDialog: Boolean = false,
     val showCreatePlaylistDialog: Boolean = false,
-    val statusMessage: String? = null
+    val showBatteryPrompt: Boolean = false,
+    val statusMessage: String? = null,
+    val playbackContext: PlaybackContext? = null
 )
 
 sealed interface PlayerIntent {
@@ -70,6 +75,12 @@ sealed interface PlayerIntent {
     data class AddCurrentSongToPlaylist(val playlistId: Long) : PlayerIntent
     data class CreatePlaylistAndAddCurrentSong(val name: String) : PlayerIntent
     data object DismissStatusMessage : PlayerIntent
+    data class StartRadio(val song: Song) : PlayerIntent
+    data class PlayNext(val song: Song) : PlayerIntent
+    data class AddToQueue(val song: Song) : PlayerIntent
+    data class PlayDeepLinkTrack(val song: Song) : PlayerIntent
+    data object DismissBatteryPrompt : PlayerIntent
+    data object ConfirmBatteryPrompt : PlayerIntent
 }
 
 @HiltViewModel
@@ -77,7 +88,8 @@ class PlayerViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val musicController: MusicController,
     private val songRepository: SongRepository,
-    private val playlistRepository: PlaylistRepository
+    private val playlistRepository: PlaylistRepository,
+    private val playbackPreferences: PlaybackPreferences
 ) : ViewModel() {
 
     private val _lyrics = MutableStateFlow<List<LyricLine>>(emptyList())
@@ -85,6 +97,7 @@ class PlayerViewModel @Inject constructor(
     private val _gradientColor = MutableStateFlow(SpotifyBlack)
     private val _showAddToPlaylistDialog = MutableStateFlow(false)
     private val _showCreatePlaylistDialog = MutableStateFlow(false)
+    private val _showBatteryPrompt = MutableStateFlow(false)
     private val _statusMessage = MutableStateFlow<String?>(null)
     private var lastLoadedSongId: Long? = null
     private var lyricsAndPaletteJob: kotlinx.coroutines.Job? = null
@@ -104,6 +117,18 @@ class PlayerViewModel @Inject constructor(
                 }
             }
         }
+        viewModelScope.launch {
+            musicController.isPlaying.collect { isPlaying ->
+                if (isPlaying && !_showBatteryPrompt.value) {
+                    val powerManager = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+                    val isIgnoring = powerManager?.isIgnoringBatteryOptimizations(context.packageName) == true
+                    val dismissed = playbackPreferences.batteryOptimizationPromptDismissed.first()
+                    if (!isIgnoring && !dismissed) {
+                        _showBatteryPrompt.value = true
+                    }
+                }
+            }
+        }
     }
 
     private val playbackTiming = combine(
@@ -119,22 +144,25 @@ class PlayerViewModel @Inject constructor(
     ) { shuf, rep -> Pair(shuf, rep) }
 
     private val playlistAndDialogState = combine(
-        playlistRepository.playlists,
-        songRepository.allSongs,
+        combine(playlistRepository.playlists, songRepository.allSongs) { playlists, allSavedSongs ->
+            val pinnedIds = allSavedSongs.mapNotNull { it.remoteVideoId }.toSet()
+            Pair(playlists, pinnedIds)
+        },
         _showAddToPlaylistDialog,
         _showCreatePlaylistDialog,
-        _statusMessage
-    ) { playlists, allSavedSongs, showAdd, showCreate, msg ->
-        val pinnedIds = allSavedSongs.mapNotNull { it.remoteVideoId }.toSet()
-        PlayerPlaylistData(playlists, pinnedIds, showAdd, showCreate, msg)
+        _statusMessage,
+        _showBatteryPrompt
+    ) { (playlists, pinnedIds), showAdd, showCreate, msg, showBattery ->
+        PlayerPlaylistData(playlists, pinnedIds, showAdd, showCreate, msg, showBattery)
     }
 
     private val metadataState = combine(
         _lyrics,
         _rawLyricsText,
         _gradientColor,
-        playlistAndDialogState
-    ) { lyr, raw, grad, plData -> PlayerMetadataData(lyr, raw, grad, plData) }
+        playlistAndDialogState,
+        musicController.playbackContext
+    ) { lyr, raw, grad, plData, pContext -> PlayerMetadataData(lyr, raw, grad, plData, pContext) }
 
     val uiState: StateFlow<PlayerUiState> = combine(
         musicController.currentSong,
@@ -149,7 +177,7 @@ class PlayerViewModel @Inject constructor(
         } else -1
 
         val isCachedOrPinned = song?.let {
-            musicController.isSongCached(it) || (it.remoteVideoId != null && it.remoteVideoId in meta.playlistData.pinnedIds)
+            if (it.isLocal) true else musicController.isSongCached(it)
         } ?: false
 
         PlayerUiState(
@@ -168,7 +196,9 @@ class PlayerViewModel @Inject constructor(
             playlists = meta.playlistData.playlists,
             showAddToPlaylistDialog = meta.playlistData.showAddDialog,
             showCreatePlaylistDialog = meta.playlistData.showCreateDialog,
-            statusMessage = meta.playlistData.statusMessage
+            showBatteryPrompt = meta.playlistData.showBatteryPrompt,
+            statusMessage = meta.playlistData.statusMessage,
+            playbackContext = meta.playbackContext
         )
     }.stateIn(
         scope = viewModelScope,
@@ -209,7 +239,9 @@ class PlayerViewModel @Inject constructor(
                     if (cachedFile.exists()) {
                         try {
                             songRepository.updateLrcPath(song.id, cachedFile.absolutePath)
-                        } catch (_: Exception) {}
+                        } catch (e: Exception) {
+                            android.util.Log.w("PlayerViewModel", "Failed to update lrc path", e)
+                        }
                     }
                 }
             }
@@ -297,7 +329,9 @@ class PlayerViewModel @Inject constructor(
                     _rawLyricsText.value = trimmed
                     try {
                         songRepository.updateLrcPath(song.id, file?.absolutePath.orEmpty())
-                    } catch (_: Exception) {}
+                    } catch (e: Exception) {
+                        android.util.Log.w("PlayerViewModel", "Failed to update lrc path for custom lyrics", e)
+                    }
                 }
             }
             is PlayerIntent.ShowAddToPlaylistDialog -> {
@@ -309,12 +343,12 @@ class PlayerViewModel @Inject constructor(
             is PlayerIntent.AddCurrentSongToPlaylist -> {
                 val song = uiState.value.currentSong ?: return
                 viewModelScope.launch {
-                    playlistRepository.addSongObjectToPlaylist(intent.playlistId, song)
-                    if (song.isRemoteStream) {
-                        musicController.downloadSongForOffline(song)
+                    val resolvedSong = playlistRepository.addSongObjectToPlaylist(intent.playlistId, song)
+                    if (resolvedSong.isRemoteStream && !musicController.isSongCached(resolvedSong)) {
+                        musicController.downloadSongForOffline(resolvedSong)
                     }
                     _showAddToPlaylistDialog.value = false
-                    _statusMessage.value = "Added '${song.title}' to playlist"
+                    _statusMessage.value = "Added '${resolvedSong.title}' to playlist"
                 }
             }
             is PlayerIntent.CreatePlaylistAndAddCurrentSong -> {
@@ -324,11 +358,11 @@ class PlayerViewModel @Inject constructor(
                 viewModelScope.launch {
                     val playlistId = playlistRepository.createPlaylist(trimmed)
                     if (song != null) {
-                        playlistRepository.addSongObjectToPlaylist(playlistId, song)
-                        if (song.isRemoteStream) {
-                            musicController.downloadSongForOffline(song)
+                        val resolvedSong = playlistRepository.addSongObjectToPlaylist(playlistId, song)
+                        if (resolvedSong.isRemoteStream && !musicController.isSongCached(resolvedSong)) {
+                            musicController.downloadSongForOffline(resolvedSong)
                         }
-                        _statusMessage.value = "Created '$trimmed' & added '${song.title}'"
+                        _statusMessage.value = "Created '$trimmed' & added '${resolvedSong.title}'"
                     } else {
                         _statusMessage.value = "Created playlist '$trimmed'"
                     }
@@ -338,6 +372,48 @@ class PlayerViewModel @Inject constructor(
             }
             is PlayerIntent.DismissStatusMessage -> {
                 _statusMessage.value = null
+            }
+            is PlayerIntent.StartRadio -> musicController.startRadio(intent.song)
+            is PlayerIntent.PlayNext -> musicController.playNext(intent.song)
+            is PlayerIntent.AddToQueue -> musicController.addToQueue(intent.song)
+            is PlayerIntent.PlayDeepLinkTrack -> {
+                viewModelScope.launch {
+                    val resolved = playlistRepository.resolveExistingLibrarySong(intent.song) ?: intent.song
+                    musicController.playQueue(
+                        songs = listOf(resolved),
+                        startIndex = 0,
+                        context = PlaybackContext(
+                            title = resolved.title,
+                            type = com.mousikify.core.model.PlaybackContextType.SEARCH
+                        )
+                    )
+                }
+            }
+            is PlayerIntent.DismissBatteryPrompt -> {
+                _showBatteryPrompt.value = false
+                viewModelScope.launch {
+                    playbackPreferences.setBatteryOptimizationPromptDismissed(true)
+                }
+            }
+            is PlayerIntent.ConfirmBatteryPrompt -> {
+                _showBatteryPrompt.value = false
+                viewModelScope.launch {
+                    playbackPreferences.setBatteryOptimizationPromptDismissed(true)
+                }
+                try {
+                    val intent = android.content.Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = Uri.parse("package:${context.packageName}")
+                        flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    context.startActivity(intent)
+                } catch (_: Exception) {
+                    try {
+                        val fallback = android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+                            flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        context.startActivity(fallback)
+                    } catch (_: Exception) {}
+                }
             }
         }
     }
@@ -355,12 +431,14 @@ private data class PlayerPlaylistData(
     val pinnedIds: Set<String>,
     val showAddDialog: Boolean,
     val showCreateDialog: Boolean,
-    val statusMessage: String?
+    val statusMessage: String?,
+    val showBatteryPrompt: Boolean
 )
 
 private data class PlayerMetadataData(
     val lyrics: List<LyricLine>,
     val rawLyrics: String,
     val gradient: Color,
-    val playlistData: PlayerPlaylistData
+    val playlistData: PlayerPlaylistData,
+    val playbackContext: PlaybackContext? = null
 )

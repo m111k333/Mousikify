@@ -14,16 +14,28 @@ android {
         applicationId = "com.mousikify"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        create("release") {
+            storeFile = file(System.getenv("MOUSIKIFY_KEYSTORE_FILE") ?: "mousikify-release.jks")
+            storePassword = System.getenv("MOUSIKIFY_KEYSTORE_PASSWORD") ?: "android"
+            keyAlias = System.getenv("MOUSIKIFY_KEY_ALIAS") ?: "androiddebugkey"
+            keyPassword = System.getenv("MOUSIKIFY_KEY_PASSWORD") ?: "android"
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

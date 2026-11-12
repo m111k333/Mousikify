@@ -37,7 +37,8 @@ object SpotifyWidgetUpdater {
     private var updateJob: Job? = null
     private const val DEFAULT_WIDGET_BG_COLOR = 0xFF242424.toInt()
     private const val MAX_WIDGET_ART_DIMENSION = 256
-    private const val OFFLINE_ARTWORK_DIR_NAME = "offline_artwork_cache"
+    private const val PRIMARY_OFFLINE_ARTWORK_DIR_NAME = "offline_artwork"
+    private const val LEGACY_OFFLINE_ARTWORK_DIR_NAME = "offline_artwork_cache"
 
     @Volatile
     private var cachedSongId: Long? = null
@@ -227,11 +228,18 @@ object SpotifyWidgetUpdater {
     private suspend fun loadArtworkBitmap(context: Context, song: Song): Bitmap? = withContext(Dispatchers.IO) {
         try {
             val cleanVideoId = song.remoteVideoId?.removePrefix("ytm://")?.substringBefore("?")?.trim()
-            val offlineArtDir = File(context.cacheDir, OFFLINE_ARTWORK_DIR_NAME)
-            val offlineArtFile = if (!cleanVideoId.isNullOrEmpty()) File(offlineArtDir, "$cleanVideoId.jpg") else null
+            val primaryArtDir = File(context.filesDir, PRIMARY_OFFLINE_ARTWORK_DIR_NAME)
+            val legacyArtDir = File(context.cacheDir, LEGACY_OFFLINE_ARTWORK_DIR_NAME)
+            val primaryArtFile = if (!cleanVideoId.isNullOrEmpty()) File(primaryArtDir, "$cleanVideoId.jpg") else null
+            val legacyArtFile = if (!cleanVideoId.isNullOrEmpty()) File(legacyArtDir, "$cleanVideoId.jpg") else null
+            val existingArtFile = when {
+                primaryArtFile != null && primaryArtFile.exists() && primaryArtFile.length() > 0L -> primaryArtFile
+                legacyArtFile != null && legacyArtFile.exists() && legacyArtFile.length() > 0L -> legacyArtFile
+                else -> null
+            }
 
             val artworkData: Any? = when {
-                offlineArtFile != null && offlineArtFile.exists() && offlineArtFile.length() > 0L -> offlineArtFile
+                existingArtFile != null -> existingArtFile
                 !song.artworkUri.isNullOrBlank() -> song.artworkUri
                 song.albumId > 0L -> "content://media/external/audio/albumart/${song.albumId}"
                 else -> null
@@ -263,11 +271,11 @@ object SpotifyWidgetUpdater {
 
             val finalBitmap = bitmap ?: return@withContext null
 
-            // Persist a copy in offline_artwork_cache if this is an in-app remote/downloaded song
-            if (offlineArtFile != null && (!offlineArtFile.exists() || offlineArtFile.length() == 0L)) {
+            // Persist a copy in offline_artwork if this is an in-app remote/downloaded song
+            if (primaryArtFile != null && (!primaryArtFile.exists() || primaryArtFile.length() == 0L)) {
                 runCatching {
-                    offlineArtDir.mkdirs()
-                    offlineArtFile.outputStream().use { out ->
+                    primaryArtDir.mkdirs()
+                    primaryArtFile.outputStream().use { out ->
                         finalBitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
                     }
                 }

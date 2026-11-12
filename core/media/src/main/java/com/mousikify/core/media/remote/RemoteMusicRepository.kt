@@ -6,9 +6,12 @@ import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import com.mousikify.core.media.diagnostics.DiagnosticsLog
+import com.mousikify.core.media.recommendation.SimilarArtistDiscoveryService
 import com.mousikify.core.media.remote.YouTubeMusicSearchPagingSource.Companion.toSong
 import com.mousikify.core.model.Song
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -20,6 +23,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import org.schabi.newpipe.extractor.MediaFormat
 import org.schabi.newpipe.extractor.ServiceList
+import org.schabi.newpipe.extractor.channel.ChannelInfoItem
 import org.schabi.newpipe.extractor.playlist.PlaylistInfo
 import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem
 import org.schabi.newpipe.extractor.services.youtube.linkHandler.YoutubeSearchQueryHandlerFactory
@@ -79,7 +83,8 @@ data class StreamingDiagnosticReport(
 @Singleton
 class RemoteMusicRepository @Inject constructor(
     private val okHttpClient: OkHttpClient,
-    private val diagnosticsLog: DiagnosticsLog
+    private val diagnosticsLog: DiagnosticsLog,
+    private val similarArtistDiscoveryService: SimilarArtistDiscoveryService
 ) {
     private val urlCache = ConcurrentHashMap<String, ResolvedStreamManifest>()
     private val mutexMap = ConcurrentHashMap<String, Mutex>()
@@ -147,6 +152,53 @@ class RemoteMusicRepository @Inject constructor(
                 androidSdkVersion = 34
             )
         )
+
+        fun parsePlaylistTrackAttribution(song: Song): Song {
+            val rawTitle = song.title.trim()
+            val rawUploader = song.artistName.trim().removeSuffix(" - Topic")
+
+            val delimiters = listOf(" - ", " – ", " — ", ": ")
+            for (delim in delimiters) {
+                if (rawTitle.contains(delim)) {
+                    val parts = rawTitle.split(delim, limit = 2)
+                    val potentialArtist = parts[0].trim()
+                    val potentialTitle = parts[1].trim()
+                    if (potentialArtist.isNotBlank() && potentialTitle.isNotBlank()) {
+                        val formattedArtist = if (!rawUploader.equals(potentialArtist, ignoreCase = true) &&
+                            rawUploader.isNotBlank() &&
+                            !rawUploader.equals("YouTube Music", ignoreCase = true)
+                        ) {
+                            "$potentialArtist • via $rawUploader"
+                        } else {
+                            potentialArtist
+                        }
+                        return song.copy(
+                            title = potentialTitle,
+                            artistName = formattedArtist
+                        )
+                    }
+                }
+            }
+
+            val formattedArtist = if (rawUploader.isNotBlank() && !rawUploader.equals("YouTube Music", ignoreCase = true)) {
+                "via $rawUploader"
+            } else {
+                song.artistName
+            }
+            return song.copy(artistName = formattedArtist)
+        }
+
+        fun extractSearchTargetTitle(query: String): String {
+            val trimmed = query.trim()
+            val delimiters = listOf(" - ", " – ", " — ", ": ")
+            for (delim in delimiters) {
+                if (trimmed.contains(delim)) {
+                    val after = trimmed.substringAfter(delim).trim()
+                    if (after.isNotBlank()) return after
+                }
+            }
+            return trimmed
+        }
     }
 
     init {
@@ -170,6 +222,270 @@ class RemoteMusicRepository @Inject constructor(
                 )
             }
         ).flow
+    }
+
+    /**
+     * One-shot search for streaming songs on YouTube Music by artist or query (capped at limit).
+     */
+    suspend fun searchSongsByArtist(artist: String, limit: Int = 10): Result<List<Song>> =
+        withContext(Dispatchers.IO) {
+            val trimmed = artist.trim()
+            if (trimmed.isEmpty()) return@withContext Result.success(emptyList())
+            val start = System.currentTimeMillis()
+            runCatching {
+                val ytService = ServiceList.YouTube
+                val qh = ytService.searchQHFactory.fromQuery(
+                    trimmed,
+                    listOf(YoutubeSearchQueryHandlerFactory.VIDEOS),
+                    ""
+                )
+                val extractor = ytService.getSearchExtractor(qh)
+                extractor.fetchPage()
+                val songs = extractor.initialPage.items
+                    .filterIsInstance<StreamInfoItem>()
+                    .mapNotNull { it.toSong() }
+                    .take(limit)
+                val elapsed = System.currentTimeMillis() - start
+                diagnosticsLog.info("Search", "Found ${songs.size} songs for artist '$trimmed' in ${elapsed}ms")
+                songs
+            }.onFailure { e ->
+                diagnosticsLog.warn("Search", "Artist search failed for '$trimmed': ${e.message}")
+            }
+        }
+
+    /**
+     * Resolves an online artist profile with top songs, albums, singles, and similar artists.
+     */
+    suspend fun getRemoteArtistProfile(
+        artistName: String,
+        channelUrl: String? = null,
+        avatarUrl: String? = null
+    ): Result<com.mousikify.core.model.ArtistProfile> =
+        withContext(Dispatchers.IO) {
+            val trimmed = artistName.trim()
+            if (trimmed.isEmpty()) return@withContext Result.failure(IllegalArgumentException("Artist name empty"))
+            runCatching {
+                coroutineScope {
+                    val songsDeferred = async { searchSongsByArtist(trimmed, limit = 25).getOrDefault(emptyList()) }
+                    val albumsDeferred = async { searchAlbums(trimmed, limit = 25).getOrDefault(emptyList()) }
+                    val similarDeferred = async { similarArtistDiscoveryService.findSimilarArtistsDetailed(trimmed, limit = 8) }
+                    val artistInfoDeferred = async {
+                        if (channelUrl == null || avatarUrl == null) {
+                            searchArtists(trimmed, limit = 1).getOrNull()?.firstOrNull()
+                        } else null
+                    }
+
+                    val songs = songsDeferred.await()
+                    val realAlbums = albumsDeferred.await()
+                    val similar = similarDeferred.await()
+                    val artistInfo = artistInfoDeferred.await()
+                    val topSongs = songs.take(16)
+                    val resolvedAvatar = avatarUrl ?: artistInfo?.avatarUrl ?: songs.firstOrNull { !it.artworkUri.isNullOrBlank() }?.artworkUri
+                    val resolvedChannelUrl = channelUrl ?: artistInfo?.channelUrl
+                    val resolvedListeners = artistInfo?.monthlyListeners
+
+                    val filteredAlbums = realAlbums.filter { alb ->
+                        val cleanArtist = alb.artist.replace(" - Topic", "", ignoreCase = true).trim()
+                        val matchesArtist = cleanArtist.equals(trimmed, ignoreCase = true) ||
+                            cleanArtist.contains(trimmed, ignoreCase = true) ||
+                            trimmed.contains(cleanArtist, ignoreCase = true)
+                        val isThirdParty = alb.artist.contains("Various Artists", ignoreCase = true) ||
+                            alb.artist.contains("Tribute", ignoreCase = true) ||
+                            alb.title.contains("Tribute", ignoreCase = true) ||
+                            alb.artist.contains("Karaoke", ignoreCase = true) ||
+                            alb.title.contains("Karaoke", ignoreCase = true)
+                        matchesArtist && !isThirdParty
+                    }
+
+                    val releases = if (filteredAlbums.isNotEmpty()) {
+                        filteredAlbums
+                    } else {
+                        songs.groupBy { it.albumName.ifBlank { "Singles & EPs" } }.map { (albName, albSongs) ->
+                            val first = albSongs.first()
+                            com.mousikify.core.model.Album(
+                                id = first.albumId,
+                                title = albName,
+                                artist = trimmed,
+                                artistId = first.artistId,
+                                songCount = albSongs.size,
+                                year = albSongs.maxOfOrNull { it.year } ?: 0,
+                                artworkUri = albSongs.firstOrNull { !it.artworkUri.isNullOrBlank() }?.artworkUri,
+                                albumType = if (albSongs.size <= 2) com.mousikify.core.model.AlbumType.SINGLE else com.mousikify.core.model.AlbumType.ALBUM,
+                                totalDurationMs = albSongs.sumOf { it.durationMs }
+                            )
+                        }
+                    }
+
+                    val (singles, fullAlbums) = releases.partition {
+                        it.songCount in 1..2 ||
+                        it.title.contains("Single", ignoreCase = true) ||
+                        it.title.contains(" - EP", ignoreCase = true) ||
+                        it.albumType == com.mousikify.core.model.AlbumType.SINGLE ||
+                        it.albumType == com.mousikify.core.model.AlbumType.EP
+                    }
+
+                    val artist = com.mousikify.core.model.Artist(
+                        id = trimmed.hashCode().toLong(),
+                        name = trimmed,
+                        songCount = songs.size,
+                        albumCount = fullAlbums.size + singles.size,
+                        avatarUrl = resolvedAvatar,
+                        monthlyListeners = resolvedListeners,
+                        channelUrl = resolvedChannelUrl
+                    )
+
+                    com.mousikify.core.model.ArtistProfile(
+                        artist = artist,
+                        topSongs = topSongs,
+                        albums = fullAlbums,
+                        singles = singles,
+                        similarArtists = similar
+                    )
+                }
+            }
+        }
+
+    /**
+     * Resolves an online album profile with numbered tracklist.
+     */
+    suspend fun getRemoteAlbumProfile(
+        albumTitle: String,
+        artistName: String,
+        artworkUri: String? = null,
+        playlistUrl: String? = null
+    ): Result<com.mousikify.core.model.AlbumProfile> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val tracks = if (!playlistUrl.isNullOrBlank()) {
+                    getPlaylistTracks(playlistUrl).getOrDefault(emptyList())
+                } else {
+                    searchMusicQuick("$artistName $albumTitle").getOrDefault(emptyList())
+                }.mapIndexed { index, song ->
+                    song.copy(trackNumber = index + 1)
+                }
+
+                val totalDuration = tracks.sumOf { it.durationMs }
+                val type = when {
+                    tracks.size <= 2 -> com.mousikify.core.model.AlbumType.SINGLE
+                    tracks.size <= 5 -> com.mousikify.core.model.AlbumType.EP
+                    else -> com.mousikify.core.model.AlbumType.ALBUM
+                }
+                val albumYear = tracks.maxOfOrNull { it.year } ?: 0
+                val album = com.mousikify.core.model.Album(
+                    id = "$artistName-$albumTitle".hashCode().toLong(),
+                    title = albumTitle,
+                    artist = artistName,
+                    artistId = artistName.hashCode().toLong(),
+                    songCount = tracks.size,
+                    year = albumYear,
+                    artworkUri = artworkUri ?: tracks.firstOrNull { !it.artworkUri.isNullOrBlank() }?.artworkUri,
+                    albumType = type,
+                    totalDurationMs = totalDuration,
+                    releaseDate = if (albumYear > 0) "$albumYear" else null,
+                    playlistUrl = playlistUrl
+                )
+
+                com.mousikify.core.model.AlbumProfile(
+                    album = album,
+                    tracks = tracks
+                )
+            }
+        }
+
+    /**
+     * Searches YouTube Music for artists matching the query.
+     */
+    suspend fun searchArtists(query: String, limit: Int = 10): Result<List<com.mousikify.core.model.Artist>> =
+        withContext(Dispatchers.IO) {
+            val trimmed = query.trim()
+            if (trimmed.isEmpty()) return@withContext Result.success(emptyList())
+            val start = System.currentTimeMillis()
+            runCatching {
+                val ytService = ServiceList.YouTube
+                val qh = ytService.searchQHFactory.fromQuery(
+                    trimmed,
+                    listOf(YoutubeSearchQueryHandlerFactory.MUSIC_ARTISTS),
+                    ""
+                )
+                val extractor = ytService.getSearchExtractor(qh)
+                extractor.fetchPage()
+                val artists = extractor.initialPage.items
+                    .filterIsInstance<ChannelInfoItem>()
+                    .map { item ->
+                        val avatar = item.thumbnails.maxByOrNull { it.height * it.width }?.url
+                        val subCount = item.subscriberCount
+                        val subText = if (subCount > 0) {
+                            formatSubscriberCount(subCount)
+                        } else {
+                            "Artist"
+                        }
+                        com.mousikify.core.model.Artist(
+                            id = item.url.hashCode().toLong(),
+                            name = item.name?.trim().orEmpty().ifBlank { "Unknown Artist" },
+                            songCount = item.streamCount.toInt(),
+                            avatarUrl = avatar,
+                            monthlyListeners = subText,
+                            channelUrl = item.url
+                        )
+                    }
+                    .take(limit)
+                val elapsed = System.currentTimeMillis() - start
+                diagnosticsLog.info("Search", "Found ${artists.size} artists for '$trimmed' in ${elapsed}ms")
+                artists
+            }.onFailure { e ->
+                diagnosticsLog.warn("Search", "Artist search failed for '$trimmed': ${e.message}")
+            }
+        }
+
+    /**
+     * Searches YouTube Music for albums matching the query.
+     */
+    suspend fun searchAlbums(query: String, limit: Int = 15): Result<List<com.mousikify.core.model.Album>> =
+        withContext(Dispatchers.IO) {
+            val trimmed = query.trim()
+            if (trimmed.isEmpty()) return@withContext Result.success(emptyList())
+            val start = System.currentTimeMillis()
+            runCatching {
+                val ytService = ServiceList.YouTube
+                val qh = ytService.searchQHFactory.fromQuery(
+                    trimmed,
+                    listOf(YoutubeSearchQueryHandlerFactory.MUSIC_ALBUMS),
+                    ""
+                )
+                val extractor = ytService.getSearchExtractor(qh)
+                extractor.fetchPage()
+                val albums = extractor.initialPage.items
+                    .filterIsInstance<PlaylistInfoItem>()
+                    .map { item ->
+                        val cover = item.thumbnails.maxByOrNull { it.height * it.width }?.url
+                        val artistName = item.uploaderName?.trim().orEmpty().ifBlank { "Unknown Artist" }
+                        com.mousikify.core.model.Album(
+                            id = item.url.hashCode().toLong(),
+                            title = item.name?.trim().orEmpty().ifBlank { "Unknown Album" },
+                            artist = artistName,
+                            artistId = artistName.hashCode().toLong(),
+                            songCount = item.streamCount.toInt(),
+                            artworkUri = cover,
+                            playlistUrl = item.url,
+                            albumType = com.mousikify.core.model.AlbumType.ALBUM
+                        )
+                    }
+                    .take(limit)
+                val elapsed = System.currentTimeMillis() - start
+                diagnosticsLog.info("Search", "Found ${albums.size} albums for '$trimmed' in ${elapsed}ms")
+                albums
+            }.onFailure { e ->
+                diagnosticsLog.warn("Search", "Album search failed for '$trimmed': ${e.message}")
+            }
+        }
+
+    private fun formatSubscriberCount(count: Long): String {
+        return when {
+            count >= 1_000_000_000 -> String.format(java.util.Locale.US, "%.1fB subscribers", count / 1_000_000_000.0)
+            count >= 1_000_000 -> String.format(java.util.Locale.US, "%.1fM subscribers", count / 1_000_000.0)
+            count >= 1_000 -> String.format(java.util.Locale.US, "%.1fK subscribers", count / 1_000.0)
+            else -> "$count subscribers"
+        }
     }
 
     /**
@@ -202,6 +518,7 @@ class RemoteMusicRepository @Inject constructor(
                             streamCount = item.streamCount
                         )
                     }
+                    .take(15)
                 val elapsed = System.currentTimeMillis() - start
                 diagnosticsLog.info("Search", "Found ${playlists.size} playlists for '$trimmed' in ${elapsed}ms")
                 playlists
@@ -218,7 +535,8 @@ class RemoteMusicRepository @Inject constructor(
             val start = System.currentTimeMillis()
             runCatching {
                 val ytService = ServiceList.YouTube
-                val playlistInfo = PlaylistInfo.getInfo(ytService, playlistUrl)
+                val normalizedUrl = playlistUrl.replace("music.youtube.com", "www.youtube.com")
+                val playlistInfo = PlaylistInfo.getInfo(ytService, normalizedUrl)
                 val tracks = mutableListOf<Song>()
                 
                 playlistInfo.relatedItems
@@ -231,7 +549,7 @@ class RemoteMusicRepository @Inject constructor(
 
                 // shortcut: cap at 500 tracks to avoid long network hangs on massive playlists, upgrade if user demands unlimited
                 while (hasNext && nextPage != null && tracks.size < 500) {
-                    val moreItems = PlaylistInfo.getMoreItems(ytService, playlistUrl, nextPage)
+                    val moreItems = PlaylistInfo.getMoreItems(ytService, normalizedUrl, nextPage)
                     moreItems.items
                         .filterIsInstance<StreamInfoItem>()
                         .mapNotNull { it.toSong() }
@@ -260,7 +578,65 @@ class RemoteMusicRepository @Inject constructor(
             val start = System.currentTimeMillis()
             runCatching {
                 val ytService = ServiceList.YouTube
-                // 1. Try YouTube Music Songs filter first
+                // 1. Prioritize YouTube video search for tracks with accurate view counts & upload dates
+                val videoQh = ytService.searchQHFactory.fromQuery(
+                    trimmed,
+                    listOf(YoutubeSearchQueryHandlerFactory.VIDEOS),
+                    ""
+                )
+                val videoExtractor = ytService.getSearchExtractor(videoQh)
+                videoExtractor.fetchPage()
+                val videoTracks = videoExtractor.initialPage.items
+                    .filterIsInstance<StreamInfoItem>()
+                    .mapNotNull { it.toSong() }
+
+                // Check if the searched song title appears in the returned tracks
+                val targetTitle = extractSearchTargetTitle(trimmed)
+                val targetWords = targetTitle.lowercase().split(" ").filter { it.isNotBlank() }
+                val hasMatchingTitle = videoTracks.any { track ->
+                    val titleLower = track.title.lowercase()
+                    titleLower.contains(targetTitle.lowercase()) ||
+                        (targetWords.size > 1 && targetWords.all { titleLower.contains(it) })
+                }
+
+                // If searched title does NOT appear in video results, search community playlists
+                if (!hasMatchingTitle || videoTracks.isEmpty()) {
+                    val candidatePlaylists = searchPlaylists(trimmed).getOrDefault(emptyList()).take(3)
+                    if (candidatePlaylists.isNotEmpty()) {
+                        val playlistCandidateTracks = mutableListOf<Song>()
+                        val queryLower = targetTitle.lowercase()
+
+                        for (pl in candidatePlaylists) {
+                            val tracks = getPlaylistTracks(pl.url).getOrDefault(emptyList())
+                            val matched = tracks.filter { track ->
+                                val trackTitle = track.title.lowercase()
+                                val trackArtist = track.artistName.lowercase()
+                                trackTitle.contains(queryLower) ||
+                                    (targetWords.size > 1 && targetWords.all { trackTitle.contains(it) || trackArtist.contains(it) })
+                            }
+                            playlistCandidateTracks.addAll(matched)
+                            if (playlistCandidateTracks.size >= 10) break
+                        }
+
+                        if (playlistCandidateTracks.isNotEmpty()) {
+                            val combined = (playlistCandidateTracks + videoTracks).distinctBy { it.contentUri }
+                            val elapsed = System.currentTimeMillis() - start
+                            diagnosticsLog.info(
+                                "Search",
+                                "Found ${combined.size} tracks (${playlistCandidateTracks.size} prepended from community playlists) for '$trimmed' in ${elapsed}ms"
+                            )
+                            return@runCatching combined
+                        }
+                    }
+                }
+
+                if (videoTracks.isNotEmpty()) {
+                    val elapsed = System.currentTimeMillis() - start
+                    diagnosticsLog.success("Search", "Found ${videoTracks.size} video tracks for '$trimmed' in ${elapsed}ms")
+                    return@runCatching videoTracks
+                }
+
+                // 3. Fallback to YouTube Music Songs filter if Videos returned empty
                 val musicTracks = runCatching {
                     val qh = ytService.searchQHFactory.fromQuery(
                         trimmed,
@@ -274,26 +650,9 @@ class RemoteMusicRepository @Inject constructor(
                         .mapNotNull { it.toSong() }
                 }.getOrDefault(emptyList())
 
-                if (musicTracks.isNotEmpty()) {
-                    val elapsed = System.currentTimeMillis() - start
-                    diagnosticsLog.success("Search", "Found ${musicTracks.size} tracks for '$trimmed' in ${elapsed}ms")
-                    return@runCatching musicTracks
-                }
-
-                // 2. Fallback to general YouTube videos if Music Songs filter had no matches
-                val videoQh = ytService.searchQHFactory.fromQuery(
-                    trimmed,
-                    listOf(YoutubeSearchQueryHandlerFactory.VIDEOS),
-                    ""
-                )
-                val videoExtractor = ytService.getSearchExtractor(videoQh)
-                videoExtractor.fetchPage()
-                val fallbackTracks = videoExtractor.initialPage.items
-                    .filterIsInstance<StreamInfoItem>()
-                    .mapNotNull { it.toSong() }
                 val elapsed = System.currentTimeMillis() - start
-                diagnosticsLog.info("Search", "Found ${fallbackTracks.size} video tracks for '$trimmed' via fallback in ${elapsed}ms")
-                fallbackTracks
+                diagnosticsLog.info("Search", "Found ${musicTracks.size} music tracks for '$trimmed' via fallback in ${elapsed}ms")
+                musicTracks
             }.onFailure { e ->
                 diagnosticsLog.warn("Search", "Quick search failed for '$trimmed': ${e.message}")
             }

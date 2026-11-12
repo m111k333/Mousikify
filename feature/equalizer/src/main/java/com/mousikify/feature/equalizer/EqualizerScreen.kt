@@ -1,5 +1,11 @@
 package com.mousikify.feature.equalizer
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.PowerManager
+import android.provider.Settings
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -290,6 +296,70 @@ fun EqualizerScreen(
                         steps = 11,
                         colors = SliderDefaults.colors(thumbColor = SpotifyGreen, activeTrackColor = SpotifyGreen)
                     )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            val context = LocalContext.current
+            val powerManager = remember { context.getSystemService(Context.POWER_SERVICE) as? PowerManager }
+            var isBatteryIgnoringOptimizations by remember {
+                mutableStateOf(powerManager?.isIgnoringBatteryOptimizations(context.packageName) == true)
+            }
+
+            Card(
+                colors = CardDefaults.cardColors(containerColor = SpotifySurfaceElevated),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(text = "Background Playback Protection", style = MaterialTheme.typography.titleMedium)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = if (isBatteryIgnoringOptimizations)
+                            "Battery optimization is unrestricted. Background playback won't be paused by Android power management."
+                        else
+                            "Android battery optimization is currently restricting this app. Playback may pause after 3-4 songs when the screen is off.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = SpotifyTextSecondary
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (isBatteryIgnoringOptimizations) "Status: Unrestricted" else "Status: Restricted",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (isBatteryIgnoringOptimizations) SpotifyGreen else Color(0xFFFFB74D)
+                        )
+                        if (!isBatteryIgnoringOptimizations) {
+                            Button(
+                                onClick = {
+                                    try {
+                                        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                            data = Uri.parse("package:${context.packageName}")
+                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                        }
+                                        context.startActivity(intent)
+                                    } catch (_: Exception) {
+                                        try {
+                                            val fallback = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+                                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                            }
+                                            context.startActivity(fallback)
+                                        } catch (_: Exception) {}
+                                    }
+                                    isBatteryIgnoringOptimizations = powerManager?.isIgnoringBatteryOptimizations(context.packageName) == true
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen, contentColor = Color.Black),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("Allow Unrestricted")
+                            }
+                        }
+                    }
                 }
             }
         }

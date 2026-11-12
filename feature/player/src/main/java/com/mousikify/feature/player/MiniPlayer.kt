@@ -38,9 +38,22 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.mousikify.core.designsystem.component.MarqueeText
 import com.mousikify.core.designsystem.component.TrackSourceBadge
-import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.getValue
+import com.mousikify.core.designsystem.component.AnimatedFavoriteButton
+import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.remember
@@ -74,6 +87,13 @@ fun MiniPlayer(
 
     val coroutineScope = rememberCoroutineScope()
     val offsetX = remember { Animatable(0f) }
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(
+        targetValue = if (isPressed) 0.975f else 1.0f,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioNoBouncy),
+        label = "MiniPlayerPressScale"
+    )
 
     Box(
         modifier = modifier
@@ -81,6 +101,10 @@ fun MiniPlayer(
             .height(58.dp)
             .padding(horizontal = 8.dp)
             .offset { IntOffset(offsetX.value.roundToInt(), 0) }
+            .graphicsLayer {
+                scaleX = pressScale
+                scaleY = pressScale
+            }
             .clip(RoundedCornerShape(8.dp))
             .background(Color(0xFF282828))
             .pointerInput(Unit) {
@@ -109,7 +133,11 @@ fun MiniPlayer(
                     }
                 )
             }
-            .clickable(onClick = onClick)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            )
     ) {
         Row(
             modifier = Modifier
@@ -170,14 +198,11 @@ fun MiniPlayer(
             }
 
             // Favorite heart
-            IconButton(onClick = onFavoriteClick) {
-                Icon(
-                    imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                    contentDescription = "Favorite",
-                    tint = if (song.isFavorite) SpotifyGreen else SpotifyTextSecondary,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
+            AnimatedFavoriteButton(
+                isFavorite = song.isFavorite,
+                onToggle = onFavoriteClick,
+                iconSize = 22.dp
+            )
 
             // Play / Pause button (or Buffering spinner)
             IconButton(onClick = onPlayPauseClick) {
@@ -188,12 +213,21 @@ fun MiniPlayer(
                         strokeWidth = 2.dp
                     )
                 } else {
-                    Icon(
-                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = if (isPlaying) "Pause" else "Play",
-                        tint = SpotifyTextPrimary,
-                        modifier = Modifier.size(28.dp)
-                    )
+                    AnimatedContent(
+                        targetState = isPlaying,
+                        transitionSpec = {
+                            (scaleIn(initialScale = 0.7f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy)) + fadeIn(tween(150)))
+                                .togetherWith(scaleOut(targetScale = 0.7f, animationSpec = tween(100)) + fadeOut(tween(100)))
+                        },
+                        label = "MiniPlayerPlayPauseIconAnim"
+                    ) { playing ->
+                        Icon(
+                            imageVector = if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (playing) "Pause" else "Play",
+                            tint = SpotifyTextPrimary,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
                 }
             }
         }

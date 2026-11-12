@@ -42,7 +42,7 @@ class MousikifyApplication : Application(), Configuration.Provider, SingletonIma
 
     override fun newImageLoader(context: PlatformContext): ImageLoader {
         return ImageLoader.Builder(context)
-            .crossfade(true)
+            .crossfade(250)
             .memoryCache {
                 MemoryCache.Builder()
                     .maxSizePercent(context, 0.12)
@@ -60,6 +60,20 @@ class MousikifyApplication : Application(), Configuration.Provider, SingletonIma
     override fun onCreate() {
         super.onCreate()
 
+        // Capture uncaught exceptions to internal storage so friends can share crash logs
+        val defaultExceptionHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            runCatching {
+                val crashFile = java.io.File(filesDir, "last_crash.txt")
+                val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+                val report = "Crash at $timestamp on thread ${thread.name} " +
+                        "(Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}, Android SDK ${android.os.Build.VERSION.SDK_INT}):\n" +
+                        throwable.stackTraceToString()
+                crashFile.writeText(report)
+            }
+            defaultExceptionHandler?.uncaughtException(thread, throwable)
+        }
+
         // Disable file URI exposure check to prevent FileUriExposedException across any IPC or external notification components
         runCatching {
             StrictMode.setVmPolicy(StrictMode.VmPolicy.Builder().build())
@@ -68,8 +82,15 @@ class MousikifyApplication : Application(), Configuration.Provider, SingletonIma
         // Register MediaStore ContentObserver for real-time external music additions
         mediaStoreObserver = MediaStoreObserver(this).also { it.register() }
 
-        // Enqueue immediate initial library indexing
-        MediaStoreScannerWorker.enqueue(this, initialDelaySeconds = 0)
+        // Enqueue immediate initial library indexing only if storage permission is already granted
+        val hasAudioPermission = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.READ_MEDIA_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        } else {
+            androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.READ_EXTERNAL_STORAGE) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+        if (hasAudioPermission) {
+            MediaStoreScannerWorker.enqueue(this, initialDelaySeconds = 0)
+        }
 
         // Continuously synchronize real-time playback state with Spotify home screen widget
         applicationScope.launch {

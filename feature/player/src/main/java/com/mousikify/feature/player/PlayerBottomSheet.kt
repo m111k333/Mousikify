@@ -36,7 +36,19 @@ import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.graphics.Color
 import com.mousikify.core.designsystem.theme.SpotifyBlack
+import com.mousikify.core.designsystem.theme.SpotifyCardBackground
+import com.mousikify.core.designsystem.theme.SpotifyGreen
+import com.mousikify.core.designsystem.theme.SpotifyTextPrimary
+import com.mousikify.core.designsystem.theme.SpotifyTextSecondary
+import com.mousikify.core.model.PlaybackContext
+import com.mousikify.core.model.Song
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -47,6 +59,34 @@ fun MiniPlayerBar(
     viewModel: PlayerViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+
+    if (uiState.showBatteryPrompt) {
+        AlertDialog(
+            onDismissRequest = { viewModel.onIntent(PlayerIntent.DismissBatteryPrompt) },
+            containerColor = SpotifyCardBackground,
+            title = { Text("Unrestricted Background Playback", color = SpotifyTextPrimary) },
+            text = {
+                Text(
+                    "Android system battery optimization may pause playback after 3-4 songs when the screen is turned off.\n\nAllow Mousikify to run unrestricted for seamless background playback?",
+                    color = SpotifyTextSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = { viewModel.onIntent(PlayerIntent.ConfirmBatteryPrompt) },
+                    colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen, contentColor = Color.Black)
+                ) {
+                    Text("Allow")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.onIntent(PlayerIntent.DismissBatteryPrompt) }) {
+                    Text("Not now", color = SpotifyTextSecondary)
+                }
+            }
+        )
+    }
+
     val currentSong = uiState.currentSong ?: return
 
     val progressFraction = if (uiState.durationMs > 0) {
@@ -77,8 +117,20 @@ fun FullScreenPlayerOverlay(
     onCollapse: () -> Unit,
     onNavigateToEqualizer: () -> Unit,
     modifier: Modifier = Modifier,
+    onNavigateToArtist: (String) -> Unit = {},
+    onNavigateToContext: ((PlaybackContext) -> Unit)? = null,
+    onOpenRadio: ((Song) -> Unit)? = null,
+    deepLinkTrack: Song? = null,
+    onDeepLinkTrackHandled: () -> Unit = {},
     viewModel: PlayerViewModel = hiltViewModel()
 ) {
+    LaunchedEffect(deepLinkTrack) {
+        if (deepLinkTrack != null) {
+            viewModel.onIntent(PlayerIntent.PlayDeepLinkTrack(deepLinkTrack))
+            onDeepLinkTrackHandled()
+        }
+    }
+
     BackHandler(enabled = isExpanded) {
         onCollapse()
     }
@@ -100,7 +152,11 @@ fun FullScreenPlayerOverlay(
 
     fun onDragDelta(delta: Float) {
         coroutineScope.launch {
-            val newOffset = (offsetY.value + delta).coerceAtLeast(0f)
+            // Apply rubber-band resistance as drag progresses
+            val resistance = if (offsetY.value > 0f) {
+                1f - (offsetY.value / screenHeightPx).coerceIn(0f, 0.45f)
+            } else 1f
+            val newOffset = (offsetY.value + delta * resistance).coerceAtLeast(0f)
             offsetY.snapTo(newOffset)
         }
     }
@@ -112,7 +168,7 @@ fun FullScreenPlayerOverlay(
                 // Smoothly finish sliding down off-screen
                 offsetY.animateTo(
                     targetValue = screenHeightPx,
-                    animationSpec = tween(durationMillis = 180, easing = FastOutLinearInEasing)
+                    animationSpec = tween(durationMillis = 200, easing = FastOutLinearInEasing)
                 )
                 // Set gesture dismissing to suppress secondary exit animation from top
                 isGestureDismissing = true
@@ -122,7 +178,7 @@ fun FullScreenPlayerOverlay(
                     targetValue = 0f,
                     animationSpec = spring(
                         stiffness = Spring.StiffnessMediumLow,
-                        dampingRatio = Spring.DampingRatioLowBouncy
+                        dampingRatio = Spring.DampingRatioNoBouncy
                     )
                 )
             }
@@ -198,6 +254,22 @@ fun FullScreenPlayerOverlay(
                     onCollapse()
                     onNavigateToEqualizer()
                 },
+                onNavigateToArtist = {
+                    onCollapse()
+                    onNavigateToArtist(it)
+                },
+                onNavigateToContext = onNavigateToContext?.let { callback ->
+                    { context ->
+                        onCollapse()
+                        callback(context)
+                    }
+                },
+                onOpenRadio = onOpenRadio?.let { callback ->
+                    { song ->
+                        onCollapse()
+                        callback(song)
+                    }
+                },
                 onDragDelta = ::onDragDelta,
                 onDragFinished = ::onDragFinished
             )
@@ -209,6 +281,7 @@ fun FullScreenPlayerOverlay(
 fun PlayerBottomSheet(
     onNavigateToEqualizer: () -> Unit,
     modifier: Modifier = Modifier,
+    onNavigateToArtist: (String) -> Unit = {},
     viewModel: PlayerViewModel = hiltViewModel()
 ) {
     var isExpanded by remember { mutableStateOf(false) }
@@ -221,6 +294,7 @@ fun PlayerBottomSheet(
             isExpanded = isExpanded,
             onCollapse = { isExpanded = false },
             onNavigateToEqualizer = onNavigateToEqualizer,
+            onNavigateToArtist = onNavigateToArtist,
             viewModel = viewModel
         )
     }
