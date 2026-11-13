@@ -151,8 +151,35 @@
 
       openAppBtn.href = isAndroid ? intentUrl : customSchemeUrl;
 
+      const friendCodeParam = (params.get("f") || "").trim().toUpperCase();
       const playlistParam = params.get("p");
-      if (playlistParam) {
+      if (friendCodeParam) {
+        badgeEl.textContent = "Add Friend";
+        const inviterName = (params.get("fn") || "").trim();
+        titleEl.textContent = inviterName || "Add Friend";
+        subtitleEl.textContent = "Friend Code: " + friendCodeParam;
+        openAppBtn.textContent = "Add Friend";
+        openYtBtn.style.display = "none";
+
+        try {
+          const inviteResp = await fetch(
+            "https://mousikify-social-default-rtdb.europe-west1.firebasedatabase.app/public_invites/" +
+              encodeURIComponent(friendCodeParam) +
+              ".json"
+          );
+          if (inviteResp.ok) {
+            const inviteData = await inviteResp.json();
+            if (inviteData && inviteData.displayName) {
+              titleEl.textContent = inviteData.displayName;
+            }
+            if (inviteData && inviteData.avatarDataUri) {
+              coverEl.src = inviteData.avatarDataUri;
+              coverEl.style.borderRadius = "50%";
+              coverEl.style.display = "block";
+            }
+          }
+        } catch (_) {}
+      } else if (playlistParam) {
         badgeEl.textContent = "Shared Playlist";
         try {
           const base64 = playlistParam.replace(/-/g, "+").replace(/_/g, "/");
